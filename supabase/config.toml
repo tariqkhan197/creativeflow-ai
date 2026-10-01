@@ -1,0 +1,22 @@
+# Minimal Supabase CLI configuration. Used by `supabase link`, `supabase db push`
+# and `supabase start` (local development, requires Docker).
+project_id = "creativeflow-ai"
+
+[api]
+schemas = ["public"]
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/confirm"]
+minimum_password_length = 8
+
+[auth.email]
+enable_confirmations = true
+
+[auth.email.template.confirmation]
+subject = "Confirm your CreativeFlow AI account"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Reset your CreativeFlow AI password"
+content_path = "./supabase/templates/recovery.html"
