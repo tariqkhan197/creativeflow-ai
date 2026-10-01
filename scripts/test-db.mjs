@@ -53,8 +53,8 @@ const SUPABASE_STUBS = `
 
 // Supabase projects normally grant table privileges to the API roles by
 // default, but "automatic grants" can be switched off. Run with
-// NO_DEFAULT_GRANTS=1 to verify the migrations work either way.
-const DEFAULT_GRANTS = process.env.NO_DEFAULT_GRANTS
+// --no-default-grants to verify the migrations work either way.
+const DEFAULT_GRANTS = process.argv.includes("--no-default-grants")
   ? ""
   : `
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;

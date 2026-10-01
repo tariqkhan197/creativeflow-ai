@@ -1,6 +1,6 @@
 # Setup guide
 
-You need **Node.js 20.9+** and a **Supabase** project. Anthropic and Stripe are optional until phases 5 and 6. The
+You need **Node.js 20.11+** (22 LTS recommended) and a **Supabase** project. Anthropic and Stripe are optional until phases 5 and 6. The
 app shows what is configured at `/setup`. It shows true/false only and never displays secret values.
 
 ## 1. Install
