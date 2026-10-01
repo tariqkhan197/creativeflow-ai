@@ -87,6 +87,10 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 
 ## Migrations workflow
 
+- `20261001000000_initial_schema.sql`: the full schema, RLS, storage and RPCs.
+- `20261001000100_explicit_api_grants.sql`: explicit Data API grants, so the schema also works on projects created
+  with automatic table grants turned off. `npm run test:db` runs the suite in both modes.
+
 - Never edit an applied migration. Add a new file: `npx supabase migration new <name>`.
 - Run `npm run test:db` after every schema change; add a test for every new policy.
 - After pushing, regenerate types: `npm run db:types`.

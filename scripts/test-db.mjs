@@ -21,9 +21,6 @@ const SUPABASE_STUBS = `
   create role authenticated nologin;
   create role service_role nologin bypassrls;
   grant usage on schema public to anon, authenticated, service_role;
-  alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
-  alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
-  alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
 
   create schema auth;
   grant usage on schema auth to anon, authenticated, service_role;
@@ -52,6 +49,17 @@ const SUPABASE_STUBS = `
   );
   alter table storage.objects enable row level security;
   grant all on storage.objects to authenticated;
+`;
+
+// Supabase projects normally grant table privileges to the API roles by
+// default, but "automatic grants" can be switched off. Run with
+// NO_DEFAULT_GRANTS=1 to verify the migrations work either way.
+const DEFAULT_GRANTS = process.env.NO_DEFAULT_GRANTS
+  ? ""
+  : `
+  alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
 `;
 
 const db = new PGlite();
@@ -90,7 +98,8 @@ async function createUser(email, fullName) {
 }
 
 async function main() {
-  await db.exec(SUPABASE_STUBS);
+  await db.exec(SUPABASE_STUBS + DEFAULT_GRANTS);
+  console.log(`Default API grants: ${DEFAULT_GRANTS ? "on" : "off"}`);
 
   const dir = path.join(root, "supabase", "migrations");
   const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();

@@ -30,14 +30,21 @@ cp .env.example .env.local
 **Option A: Supabase CLI (recommended)**
 
 ```bash
-npx supabase login
-npx supabase link --project-ref <your-project-ref>   # the ref is in your project URL
-npx supabase db push                                   # applies supabase/migrations/*
+npx supabase login                                     # opens the browser; no token is pasted anywhere
+npx supabase link --project-ref <your-project-ref>     # prompts for the database password (input is hidden)
+npx supabase migration list                            # Local vs Remote: both migrations should show as local-only
+npx supabase db push --dry-run                         # shows what would be applied, changes nothing
+npx supabase db push                                   # applies supabase/migrations/* in order
+npx supabase migration list                            # both migrations now show in the Remote column too
 npm run db:types                                       # optional: generate exact TS types
 ```
 
-**Option B: SQL editor.** Open **SQL Editor** in the dashboard, paste the contents of
-`supabase/migrations/20261001000000_initial_schema.sql` and run it once.
+The project ref is the `<ref>` in `https://<ref>.supabase.co`. `db push` only applies migrations that the remote
+database hasn't recorded yet. Running it again is safe. Only run it against a fresh project, or one that has only
+ever been migrated from this repository.
+
+**Option B: SQL editor.** Open **SQL Editor** in the dashboard and run each file in `supabase/migrations/` once, in
+filename order. (The CLI won't know about migrations applied this way, so pick one option and stick with it.)
 
 This creates all tables, RLS policies, RPC functions, the `project-assets` and `avatars` storage buckets, and enables
 Realtime on notifications and review comments.
@@ -64,7 +71,17 @@ The default templates also work, but only when the link is opened in the same br
 For production, configure **custom SMTP** (Authentication → SMTP Settings). Supabase's built-in email sender is
 heavily rate-limited and is meant for testing only.
 
-## 5. Run
+## 5. Verify the project
+
+```bash
+npm run verify:supabase            # env, auth settings, tables, RPCs, storage buckets (read-only)
+npm run verify:supabase -- --e2e   # + creates two throwaway users, signs in, creates a workspace,
+                                   #   checks tenant isolation, then deletes everything it created
+```
+
+The script reads `.env.local` and never prints key values. Fix anything marked ✗ before continuing.
+
+## 6. Run
 
 ```bash
 npm run dev
@@ -72,7 +89,7 @@ npm run dev
 
 Open <http://localhost:3000>, create an account, confirm your email and create your workspace.
 
-## 6. Optional integrations
+## 7. Optional integrations
 
 | Integration | Variables                                    | Where to get them                                                               | Needed from |
 | ----------- | -------------------------------------------- | ------------------------------------------------------------------------------- | ----------- |
@@ -81,7 +98,7 @@ Open <http://localhost:3000>, create an account, confirm your email and create y
 
 All of these are server-only variables.
 
-## 7. Checks
+## 8. Checks
 
 ```bash
 npm run lint         # ESLint
@@ -91,7 +108,7 @@ npm run build        # production build
 npm run check        # lint + typecheck + test:db
 ```
 
-## 8. Deploy (Vercel)
+## 9. Deploy (Vercel)
 
 1. Import the GitHub repository in Vercel.
 2. Add every variable from `.env.example` under **Settings → Environment Variables**. Set `NEXT_PUBLIC_SITE_URL` to

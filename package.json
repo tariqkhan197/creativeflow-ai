@@ -10,9 +10,10 @@
     "typecheck": "next typegen && tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:db": "node scripts/test-db.mjs",
+    "test:db": "node scripts/test-db.mjs && NO_DEFAULT_GRANTS=1 node scripts/test-db.mjs",
     "check": "npm run lint && npm run typecheck && npm run test:db",
-    "db:types": "supabase gen types typescript --linked --schema public > src/types/database.generated.ts"
+    "db:types": "supabase gen types typescript --linked --schema public > src/types/database.generated.ts",
+    "verify:supabase": "node scripts/verify-supabase.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
