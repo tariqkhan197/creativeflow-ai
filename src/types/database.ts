@@ -285,6 +285,16 @@ export type WorkspaceOverview = {
   revenue_30d_cents: number | null;
 };
 
+/** Result of public.get_invitation(token). */
+export type InvitationInfo = {
+  workspace_name: string;
+  email: string;
+  role: WorkspaceRole;
+  inviter_name: string | null;
+  expires_at: string;
+  status: "pending" | "accepted" | "expired";
+};
+
 export type Database = {
   __InternalSupabase: { PostgrestVersion: "12" };
   public: {
@@ -324,6 +334,7 @@ export type Database = {
         Returns: undefined;
       };
       workspace_overview: { Args: { p_workspace: string }; Returns: WorkspaceOverview };
+      get_invitation: { Args: { p_token: string }; Returns: InvitationInfo | null };
     };
     Enums: {
       workspace_role: WorkspaceRole;
