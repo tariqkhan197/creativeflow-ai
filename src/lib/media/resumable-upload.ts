@@ -27,7 +27,12 @@ export function createResumableUpload(
   auth: { publishableKey: string; getAccessToken: () => Promise<string | null> },
   callbacks: ResumableCallbacks,
 ): ResumableUpload {
-  const upload = new tus.Upload(file, {
+  // Pausing before the server has issued an upload URL would make "resume"
+  // start a new upload, so a pause requested that early is deferred.
+  let urlAvailable = false;
+  let pauseRequested = false;
+
+  const upload: tus.Upload = new tus.Upload(file, {
     endpoint: target.endpoint,
     chunkSize: RESUMABLE_CHUNK_SIZE,
     retryDelays: [0, 2000, 5000, 10000, 20000],
@@ -51,6 +56,10 @@ export function createResumableUpload(
       const token = await auth.getAccessToken();
       if (token) req.setHeader("Authorization", `Bearer ${token}`);
     },
+    onUploadUrlAvailable: () => {
+      urlAvailable = true;
+      if (pauseRequested) void upload.abort(false);
+    },
     onProgress: (sent, total) => callbacks.onProgress(sent, total),
     onSuccess: () => callbacks.onSuccess(),
     onError: (error) => {
@@ -68,8 +77,18 @@ export function createResumableUpload(
       if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
       upload.start();
     },
-    pause: () => upload.abort(false),
-    resume: () => upload.start(),
+    async pause() {
+      if (urlAvailable) await upload.abort(false);
+      else pauseRequested = true;
+    },
+    resume() {
+      if (pauseRequested && !urlAvailable) {
+        pauseRequested = false; // never actually paused
+        return;
+      }
+      pauseRequested = false;
+      upload.start();
+    },
     async cancel() {
       try {
         await upload.abort(true);

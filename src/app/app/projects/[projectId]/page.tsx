@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { z } from "zod";
 import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, Trash2Icon } from "lucide-react";
 import { ConfirmAction } from "@/components/app/confirm-action";
+import { ProjectFiles } from "@/components/assets/project-files";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PriorityLabel, ProjectStatusBadge } from "@/components/projects/project-badges";
 import { AddProjectMember, ProjectStatusSelect, RemoveProjectMember } from "@/components/projects/project-controls";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
@@ -168,6 +171,21 @@ export default async function ProjectPage({ params }: PageProps<"/app/projects/[
         </Card>
       </div>
 
+      <section className="grid gap-3" aria-labelledby="files-heading">
+        <h2 id="files-heading" className="text-lg font-semibold tracking-tight">
+          Files &amp; reviews
+        </h2>
+        <Suspense fallback={<FilesSkeleton />}>
+          <ProjectFiles
+            projectId={p.id}
+            workspaceId={active.id}
+            currentUserId={user.id}
+            archived={Boolean(p.archived_at)}
+            people={people}
+          />
+        </Suspense>
+      </section>
+
       <section className="grid gap-3" aria-labelledby="tasks-heading">
         <h2 id="tasks-heading" className="text-lg font-semibold tracking-tight">
           Tasks
@@ -190,6 +208,19 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
     <div className="grid gap-1">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="font-medium">{children}</dd>
+    </div>
+  );
+}
+
+function FilesSkeleton() {
+  return (
+    <div className="grid gap-4" aria-busy="true" aria-label="Loading files">
+      <Skeleton className="h-28 rounded-xl" />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="aspect-[4/3] rounded-xl" />
+        ))}
+      </div>
     </div>
   );
 }
