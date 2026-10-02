@@ -40,7 +40,7 @@ Deliberately not in Phase 2:
 
 - Invite emails are not sent automatically. The admin copies the one-time link and shares it. Automated email arrives
   with the notifications work in Phase 7.
-- Client-role invitations (client portal access) arrive in Phase 4.
+- Client-role invitations (client portal access) arrived in Phase 4.
 - Tasks move between columns with a status selector. Drag-and-drop ordering is not implemented.
 
 ## Phase 3 — Media & timestamped review ✅ (complete)
@@ -74,18 +74,38 @@ Limitations, by design or deferred:
 - No video conversion. Formats the browser can't decode are stored and offered as secure downloads.
 - Thumbnails and metadata come from the uploader's browser. If that browser can't decode the file, they are left
   empty.
-- Client-role review UI (portal), approvals and sharing toggles arrive in Phase 4. The RLS rules are already in
-  place and tested.
+- Client-role review UI (portal), approvals and sharing toggles arrived in Phase 4.
 - New-comment notifications are deferred to Phase 7.
 - Realtime DELETE events carry only the comment id (a Supabase limitation). Ids are random UUIDs, and no content is
   sent.
 
-## Phase 4 — Client portal & approvals
+## Phase 4 — Client portal & approvals (implemented; awaiting real-project verification)
 
-- Client invitations (role `client`, bound to a client record)
-- Portal experience: shared projects, review player, comment, approve / request changes (`decide_approval`)
-- Staff: request approval on an asset version, track approval status, revision rounds board
-- Project status automation (in review → revisions → approved)
+- [x] Database (`20261004000000_phase4_client_portal.sql`): clients read projects only through `portal_projects` /
+      `portal_project` (no budget, internal brief or agency notes); approvals target a ready, shared version of a
+      portal-visible project; one pending approval per version; decisions only through `decide_approval()`;
+      revision rounds numbered under a lock; visibility guards while an approval is pending; status automation;
+      notifications; activity
+- [x] Client portal access: managers and above invite client contacts, revoke invitations and remove access from the
+      client page (team invitations stay owner/admin-only)
+- [x] Staff: portal settings per project (visibility, client summary, downloads), share/unshare a version, request
+      approval (title, message, due date), cancel, `/app/approvals`, revision rounds with status
+- [x] Portal (`/portal`): role-based redirects, home with items awaiting approval, project page (summary, shared
+      files, decisions, revision rounds), file review in client mode (comments and pins, no internal notes or
+      resolving), approve / request changes
+- [x] Downloads can be turned off per project (no download link is issued to client users)
+- [x] Tests: 24 new DB tests (106 total, both grant modes), unit tests (145), browser checks (46, including client
+      mode and decisions), and Phase 4 flows in `verify:supabase -- --e2e`
+- [ ] Verified on the real Supabase project (`db push`, `verify:supabase -- --e2e`, manual checklist in
+      [TESTING.md](TESTING.md))
+
+Notes:
+
+- Turning downloads off hides download buttons and refuses download links. A client who can watch or view a file
+  can still record or save what is shown in the browser; this setting doesn't prevent that.
+- Approval notifications are in-app only. Email notifications are planned for Phase 7.
+- Client users see team members' names but not other client users' profiles. Comments by a colleague at the same
+  client are shown as "<client> reviewer".
 
 ## Phase 5 — AI Studio
 

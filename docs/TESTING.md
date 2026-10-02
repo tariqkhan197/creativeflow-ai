@@ -4,9 +4,49 @@
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------- |
 | `npm run test:unit`                | Validation, permissions, media helpers, upload state machine, threads; TUS client against a real local TUS server | No             |
 | `npm run test:db`                  | Every migration plus RLS, trigger and storage-policy tests in PGlite, run with and without default grants         | No             |
-| `npm run test:browser`             | Review viewers and the comment workflow in Chromium, with generated media (run `npm run build` first)             | No             |
+| `npm run test:browser`             | Review viewers, comments, client-portal mode and decisions in Chromium (run `npm run build` first)                | No             |
 | `npm run verify:supabase`          | Configuration, auth settings, migrations, buckets, upload limits (read-only)                                      | Yes            |
 | `npm run verify:supabase -- --e2e` | Real flows against your project with throwaway users, cleaned up afterwards                                       | Yes            |
+
+## Phase 4 manual browser checklist (real Supabase)
+
+**Status: not run yet.** Apply the Phase 4 migration first (see [SETUP.md](SETUP.md), "Applying later migrations"),
+then run `npm run verify:supabase -- --e2e`.
+
+You need three sessions (for example two browsers plus a private window): **Owner** (owner or admin), **Manager**
+(role manager), and **Client** (a new email address you can sign in with). Use a project that has a client and at
+least one uploaded video.
+
+1. **Invite the client.** As Manager: Clients → the client → **Portal access** → **Invite to portal**, enter the
+   Client's email, and copy the link. The invitation is listed as pending. Team → Invite people is still only shown
+   to owners and admins, and the Team page doesn't list client invitations.
+2. **Join the portal.** As Client, open the link, sign up or sign in with that email, and click Join. You land on
+   `/portal` with "You now have access…", not on `/app`. Opening `/app` sends you back to `/portal`.
+3. **Nothing is visible yet.** The portal shows "Nothing shared yet". As Owner, open the project → **Client portal
+   & approvals** → **Portal settings**: tick **Show in the client portal**, add a summary, keep **Allow downloads**
+   on, and save.
+4. **What the client sees.** As Client, reload `/portal`. The project appears with its summary and status, but
+   never its budget, internal brief, tasks or the client's internal notes. "No files shared yet" is shown.
+5. **Request approval.** As Manager, open the video → **Client approval** → **Request approval**, add a message and
+   a due date, and send. The file is now "Shared". The card shows "Awaiting approval", the project status is
+   **In review**, and `/app/approvals` lists the request.
+6. **Notification and review.** As Client, the bell shows "Approval requested: …". Click it to open the file in
+   the portal. Play it and post a timestamped comment with a pin. There is no **Internal note** option and no
+   **Resolve** button. Internal notes added by the team (step 6 of Phase 3) aren't shown.
+7. **Request changes.** As Client, **Request changes**, try to send it empty (it asks for a note), then describe
+   the change and send. As Manager: the bell shows "Changes requested: …". The project is in **Revisions** and
+   **Revision rounds** shows Round 1 with the note. Set the round to **Completed**.
+8. **New version and approval.** As Manager, upload v2 of the file and request approval on v2. As Client, open
+   it from the portal and **Approve**. The project status becomes **Approved**. The dashboard activity shows the
+   request, the change request, the round, and the approval, all linked.
+9. **Guards.** As Manager, request approval on a version, then try **Stop sharing** on it, or untick **Show in the
+   client portal**. Both are refused until you **Cancel request**. A second request on the same version isn't
+   offered while one is pending.
+10. **Downloads off.** As Owner, turn **Allow downloads** off. As Client, reload the file: there is no Download
+    button (for formats the browser can't preview, the message no longer says "Download to view"). Turn it back on,
+    and Download returns.
+11. **Remove access.** As Manager, on the client page remove the Client's portal access. As Client, reload: you
+    no longer have access to the workspace (with no other workspace, you're sent to create one).
 
 ## Phase 3 manual browser checklist (real Supabase)
 

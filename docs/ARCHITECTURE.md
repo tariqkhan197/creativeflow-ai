@@ -134,6 +134,35 @@ comments ◀──── Realtime postgres_changes (RLS per subscriber) ◀─�
   receive nothing. After a reconnect the panel re-fetches the thread. Updates are merged "newer wins" by parsed
   `updated_at`.
 
+## Client portal & approvals (Phase 4)
+
+- **Routing.** Client users work in `/portal`, staff in `/app`; each layout redirects the other role. This is for
+  navigation only: every page and Server Action re-checks the role, and the database decides what is visible.
+- **What clients can read.** They can't select from `projects` or `clients`, which hold the budget, internal brief
+  and the agency's notes. The portal uses `portal_projects()` / `portal_project()`, which return safe columns for the
+  client's own portal-visible projects only. Assets, comments and approvals are read directly under RLS: only shared,
+  uploaded versions, non-internal comments, and approvals on versions they can see.
+- **Approval workflow.**
+
+  ```
+  staff: request_approval(asset)       shares the version (if needed) + inserts a pending approval
+           └─ trigger                   project → in_review, notify the client's portal users, activity
+  client: decide_approval(approval)     locks the project row, records the decision
+           ├─ changes_requested         next revision round (numbered under the lock), project → revisions
+           └─ approved                  project → approved when nothing is pending and every round is completed
+  ```
+
+  Decisions are written only inside `decide_approval()`. The approvals trigger checks the current database role,
+  which an API caller can't change. One pending approval per version (unique index). While it is pending, the version
+  can't be unshared and the project can't be hidden, archived or moved to another client.
+
+- **Portal access.** Owners, admins and managers invite client contacts from the client page. The invitation is
+  bound to the client record. They can revoke invitations and remove portal users. Team invitations stay
+  owner/admin-only, in RLS as well.
+- **Downloads.** With `allow_client_downloads` off, `getAssetMediaUrls` issues no download link to client users,
+  and the viewer hides the button. Viewing still needs a signed URL, so this doesn't stop a determined client from
+  saving what they can view.
+
 ## AI generation (Phase 5)
 
 - Server Action validates the brief, inserts an `ai_generations` row (`pending`), calls the Anthropic Messages API

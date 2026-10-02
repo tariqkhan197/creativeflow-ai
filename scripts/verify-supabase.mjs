@@ -253,6 +253,14 @@ if (admin) {
     }
   }
 
+  {
+    const { data, error } = await admin.rpc("portal_projects", { p_workspace: randomUUID() });
+    if (error?.code === "PGRST202") fail("Phase 4 migration not applied", "npx supabase db push");
+    else if (error) fail(`Unexpected portal_projects result: ${error.code} ${error.message}`);
+    else if (Array.isArray(data) && data.length === 0) ok("Phase 4 migration installed (portal_projects)");
+    else fail("portal_projects returned rows without a client user");
+  }
+
   section("Realtime");
   {
     const result = await probeRealtimeTable(anon, "review_comments");
@@ -772,7 +780,154 @@ if (E2E) {
       if (lateError && /past the end/.test(lateError.message)) ok("Timestamps past the media duration are refused");
       else fail("A timestamp beyond the media duration was accepted");
 
-      // 9. Deletion removes files, thumbnails, versions and rows.
+      // 9. Phase 4: client portal privacy, approvals, revision rounds and status automation.
+      {
+        const { data: dProjects } = await d.from("projects").select("id, budget_cents, description");
+        const { data: dClients } = await d.from("clients").select("id, notes");
+        if ((dProjects ?? []).length === 0 && (dClients ?? []).length === 0)
+          ok("The client can't read projects or client records directly (budget, brief, agency notes)");
+        else fail(`PRIVACY: client reads projects=${dProjects?.length} clients=${dClients?.length}`);
+        const { data: portal, error: portalError } = await d.rpc("portal_projects", { p_workspace: wsId });
+        const row = portal?.[0];
+        if (
+          !portalError &&
+          portal?.length === 1 &&
+          row.id === project.id &&
+          !("budget_cents" in row) &&
+          !("description" in row) &&
+          row.shared_files >= 1
+        )
+          ok("portal_projects shows the client their visible project with safe fields only");
+        else fail(`portal_projects: ${portalError?.message ?? JSON.stringify(portal)}`);
+        const { data: outsiderPortal } = await b.rpc("portal_projects", { p_workspace: wsId });
+        const { data: outsiderProject } = await b.rpc("portal_project", { p_project: project.id });
+        if ((outsiderPortal ?? []).length === 0 && (outsiderProject ?? []).length === 0)
+          ok("Another workspace gets nothing from the portal functions");
+        else fail("TENANT ISOLATION BROKEN: portal functions returned another workspace's project");
+
+        // D2: managers manage client invitations, not team invitations.
+        const { data: clientInv, error: clientInvError } = await c
+          .from("workspace_invitations")
+          .insert({
+            workspace_id: wsId,
+            email: `cf-verify-${tag}-portal@example.com`,
+            role: "client",
+            client_id: client.id,
+            token_hash: hash(randomBytes(32).toString("base64url")),
+            invited_by: users[2].id,
+          })
+          .select("id")
+          .single();
+        const { data: revoked } = clientInv
+          ? await c.from("workspace_invitations").delete().eq("id", clientInv.id).select("id")
+          : { data: [] };
+        if (!clientInvError && revoked?.length === 1) ok("A manager created and revoked a client portal invitation");
+        else fail(`Manager client invitation: ${clientInvError?.message ?? "revoke failed"}`);
+
+        // Request approval (shares the version if needed) as the manager.
+        const { data: approvalId, error: reqError } = await c.rpc("request_approval", {
+          p_asset: v2.id,
+          p_title: "Verify cut v2",
+          p_message: "Please review",
+        });
+        if (reqError) throw new Error(`request_approval: ${reqError.message}`);
+        const statusOf = async () =>
+          (await c.from("projects").select("status").eq("id", project.id).single()).data?.status;
+        if ((await statusOf()) === "in_review") ok("Requesting approval moved the project to In review");
+        else fail(`Project status after request: ${await statusOf()}`);
+        const { data: dNotes } = await d
+          .from("notifications")
+          .select("type, link")
+          .eq("workspace_id", wsId)
+          .eq("type", "approval.requested");
+        if (dNotes?.some((n) => n.link === `/portal/projects/${project.id}/files/${v2.id}`))
+          ok("The client was notified in-app with a link to the file in the portal");
+        else fail(`Client notification missing: ${JSON.stringify(dNotes)}`);
+        const { error: dupError } = await c.rpc("request_approval", { p_asset: v2.id, p_title: "Again" });
+        if (dupError?.code === "23505") ok("A second pending approval on the same version is refused");
+        else fail(`Duplicate approval: ${dupError?.code ?? "accepted"}`);
+        const { error: forgeError } = await c.from("approvals").update({ status: "approved" }).eq("id", approvalId);
+        if (forgeError) ok("Approvals can't be decided by a direct update");
+        else fail("SECURITY: an approval was decided by a direct update");
+        const { error: unshareError } = await c.from("assets").update({ shared_with_client: false }).eq("id", v2.id);
+        if (unshareError) ok("A version under approval can't be unshared");
+        else fail("A version with a pending approval was unshared");
+        const { error: outsiderDecide } = await b.rpc("decide_approval", {
+          p_approval: approvalId,
+          p_decision: "approved",
+        });
+        if (outsiderDecide) ok("Another workspace can't decide the approval");
+        else fail("TENANT ISOLATION BROKEN: an outsider decided an approval");
+
+        // Client requests changes → revision round 1, project in revisions.
+        const { error: changesError } = await d.rpc("decide_approval", {
+          p_approval: approvalId,
+          p_decision: "changes_requested",
+          p_note: "Bigger logo",
+        });
+        if (changesError) throw new Error(`decide_approval: ${changesError.message}`);
+        const { data: rounds } = await c
+          .from("revisions")
+          .select("id, round_number, summary, status")
+          .eq("project_id", project.id);
+        if (rounds?.length === 1 && rounds[0].round_number === 1 && rounds[0].summary === "Bigger logo")
+          ok("The client's change request opened revision round 1");
+        else fail(`Revision rounds: ${JSON.stringify(rounds)}`);
+        if ((await statusOf()) === "revisions") ok("The project moved to Revisions");
+        else fail(`Project status after changes: ${await statusOf()}`);
+        const { data: cNotes } = await c
+          .from("notifications")
+          .select("type")
+          .eq("workspace_id", wsId)
+          .eq("type", "approval.changes_requested");
+        if (cNotes?.length === 1) ok("The requester was notified of the change request");
+        else fail("Requester notification missing");
+        const { error: againError } = await d.rpc("decide_approval", {
+          p_approval: approvalId,
+          p_decision: "approved",
+        });
+        if (againError) ok("A decided approval can't be decided again");
+        else fail("An approval was decided twice");
+
+        // Complete the round, request again, client approves → project approved.
+        const { data: done } = await c
+          .from("revisions")
+          .update({ status: "completed" })
+          .eq("id", rounds?.[0]?.id ?? randomUUID())
+          .select("completed_at")
+          .single();
+        if (done?.completed_at) ok("Completing the round records completed_at");
+        else fail("completed_at not set");
+        const { data: approval2, error: req2Error } = await c.rpc("request_approval", {
+          p_asset: v2.id,
+          p_title: "Verify cut v2 (fixed)",
+        });
+        if (req2Error) throw new Error(`request_approval (2): ${req2Error.message}`);
+        const { error: approveError } = await d.rpc("decide_approval", {
+          p_approval: approval2,
+          p_decision: "approved",
+        });
+        if (approveError) throw new Error(`approve: ${approveError.message}`);
+        if ((await statusOf()) === "approved") ok("The client's approval moved the project to Approved");
+        else fail(`Project status after approval: ${await statusOf()}`);
+        const { data: dApprovals } = await d.from("approvals").select("id, status").eq("asset_id", v2.id);
+        if (dApprovals?.length === 2) ok("The client sees the approval history of the shared version");
+        else fail(`Client approvals: ${JSON.stringify(dApprovals)}`);
+
+        const { data: p4log } = await a.from("activity_log").select("action").eq("workspace_id", wsId);
+        const p4actions = new Set((p4log ?? []).map((l) => l.action));
+        const p4missing = [
+          "approval.requested",
+          "approval.changes_requested",
+          "approval.approved",
+          "revision.opened",
+          "revision.completed",
+        ].filter((x) => !p4actions.has(x));
+        if (p4missing.length === 0) ok("Activity log recorded approval requests, decisions and revision rounds");
+        else fail(`Activity log is missing: ${p4missing.join(", ")}`);
+      }
+
+      // 10. Deletion removes files, thumbnails, versions and rows.
       const paths = [cut.path, thumbOf(cut.path), v2.path, thumbOf(v2.path)];
       const { error: removeError } = await c.storage.from(BUCKET).remove(paths);
       const leftovers = [];

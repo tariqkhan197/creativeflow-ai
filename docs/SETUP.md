@@ -32,10 +32,10 @@ cp .env.example .env.local
 ```bash
 npx supabase login                                     # opens the browser; no token is pasted anywhere
 npx supabase link --project-ref <your-project-ref>     # prompts for the database password (input is hidden)
-npx supabase migration list                            # Local vs Remote: both migrations should show as local-only
+npx supabase migration list                            # Local vs Remote: every migration should show as local-only
 npx supabase db push --dry-run                         # shows what would be applied, changes nothing
 npx supabase db push                                   # applies supabase/migrations/* in order
-npx supabase migration list                            # both migrations now show in the Remote column too
+npx supabase migration list                            # every migration now shows in the Remote column too
 npm run db:types                                       # optional: generate exact TS types
 ```
 
@@ -75,6 +75,11 @@ heavily rate-limited and is meant for testing only.
 
 When you pull new code that adds files to `supabase/migrations/`, run `npx supabase migration list`,
 `npx supabase db push --dry-run` and then `npx supabase db push`. Only the new files are applied.
+
+> **Phase 4 (`20261004000000_phase4_client_portal.sql`)** makes client access stricter: client users can no longer
+> read `projects` or `clients` directly, and the portal reads them through `portal_projects()`. Deploy the Phase 4
+> app code together with this migration. An older app version would show existing client users an empty project
+> list.
 
 ### Upload size limit
 

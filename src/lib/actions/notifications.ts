@@ -19,6 +19,7 @@ export async function markNotificationRead(id: string): Promise<{ ok: boolean }>
     .is("read_at", null);
 
   revalidatePath("/app", "layout");
+  revalidatePath("/portal", "layout");
   return { ok: !error };
 }
 
@@ -36,5 +37,6 @@ export async function markAllNotificationsRead(workspaceId: string): Promise<{ o
     .is("read_at", null);
 
   revalidatePath("/app", "layout");
+  revalidatePath("/portal", "layout");
   return { ok: !error };
 }
