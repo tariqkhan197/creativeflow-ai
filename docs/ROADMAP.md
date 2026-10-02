@@ -43,13 +43,38 @@ Deliberately not in Phase 2:
 - Client-role invitations (client portal access) arrive in Phase 4.
 - Tasks move between columns with a status selector. Drag-and-drop ordering is not implemented.
 
-## Phase 3 — Media & timestamped review
+## Phase 3 — Media & timestamped review ✅ (implemented; real-project verification pending)
 
-- Asset upload to `project-assets` (signed upload URLs, resumable upload for large video, progress, retry)
-- Versions (upload new version of an asset), thumbnails/metadata extraction (duration, dimensions)
-- Review player: custom video player, comment markers on the timeline, click-to-seek, frame annotations,
-  threaded replies, resolve/unresolve, internal notes
-- Live comments via Supabase Realtime
+- [x] Secure uploads: the asset record is created server-side first, then direct browser → Storage resumable (TUS)
+      upload in 6 MB chunks with progress, pause/resume, retry on the same record, cancel with storage cleanup, and
+      resume after an interrupted session
+- [x] Validation: MIME/extension allowlist (app, database and bucket), server-built storage paths, real size limit
+      (bucket limit plus optional `STORAGE_MAX_UPLOAD_BYTES`), finalization only after the database verifies the
+      stored object's exact size and type
+- [x] Versions: numbered by the database under a row lock, linked to the original and project; version history and
+      switcher; deleting removes every version's files and thumbnails before the records
+- [x] Metadata and thumbnails measured in the browser from the real file (duration, dimensions, frame rate, JPEG
+      thumbnail). Anything unreadable stays empty and is reported honestly
+- [x] Review page: custom video player (markers, click-to-seek, timecode, frame stepping, speed, shortcuts, frame
+      pins), image pins, audio timeline comments, PDF viewer, signed-URL refresh, unsupported-format and error states
+      with secure download
+- [x] Comments: timestamps, pins, one-level threads, author-only edits (`edited_at`), delete, resolve/unresolve,
+      internal notes, open/resolved/all filters
+- [x] Supabase Realtime live comments (RLS per subscriber, de-duplication, re-sync after reconnect)
+- [x] Reviews page, activity entries, project deletion empties Storage first
+- [x] Tests: 28 new DB tests (82 total, both grant modes), unit and integration tests (125, including a real TUS
+      server), 36 browser checks of the review UI, and Phase 3 flows in `verify:supabase -- --e2e`
+
+Limitations, by design or deferred:
+
+- No video conversion. Formats the browser can't decode are stored and offered as secure downloads.
+- Thumbnails and metadata come from the uploader's browser. If that browser can't decode the file, they are left
+  empty.
+- Client-role review UI (portal), approvals and sharing toggles arrive in Phase 4. The RLS rules are already in
+  place and tested.
+- New-comment notifications are deferred to Phase 7.
+- Realtime DELETE events carry only the comment id (a Supabase limitation). Ids are random UUIDs, and no content is
+  sent.
 
 ## Phase 4 — Client portal & approvals
 

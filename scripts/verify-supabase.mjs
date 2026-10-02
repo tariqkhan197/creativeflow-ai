@@ -11,7 +11,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { Upload as TusUpload } from "tus-js-client";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -226,6 +227,32 @@ if (admin) {
     else fail(`Unexpected get_invitation result: ${error ? `${error.code} ${error.message}` : JSON.stringify(data)}`);
   }
 
+  {
+    const { data, error } = await admin.rpc("asset_upload_constraints");
+    if (error?.code === "PGRST202") fail("Phase 3 migration not applied", "npx supabase db push");
+    else if (error) fail(`Unexpected asset_upload_constraints result: ${error.code} ${error.message}`);
+    else {
+      ok("Phase 3 migration installed (asset_upload_constraints)");
+      const types = data?.allowed_mime_types ?? [];
+      if (types.includes("video/mp4") && !types.includes("application/zip"))
+        ok(`Bucket allows ${types.length} media types only`);
+      else fail("project-assets has no file type allowlist", "npx supabase db push");
+      const bucketLimit = data?.file_size_limit ? Number(data.file_size_limit) : null;
+      console.log(
+        `  · Bucket upload limit: ${bucketLimit ? `${Math.round(bucketLimit / 1048576)} MB` : "not set on the bucket"}`,
+      );
+      const configured = Number(env.STORAGE_MAX_UPLOAD_BYTES);
+      if (Number.isSafeInteger(configured) && configured > 0) {
+        ok(`STORAGE_MAX_UPLOAD_BYTES = ${Math.round(configured / 1048576)} MB (checked before uploads start)`);
+      } else {
+        warn(
+          "Project-wide upload limit unknown (plan dependent, not readable via the API)",
+          "Optional: set STORAGE_MAX_UPLOAD_BYTES to Dashboard → Storage → Settings → upload file size limit",
+        );
+      }
+    }
+  }
+
   section("Storage");
   const { data: buckets, error: bucketError } = await admin.storage.listBuckets();
   if (bucketError) fail(`Could not list buckets: ${bucketError.message}`);
@@ -251,9 +278,10 @@ if (E2E) {
     const tag = randomBytes(4).toString("hex");
     const password = `Verify-${randomBytes(12).toString("base64url")}1`;
     const users = [];
+    const channels = [];
     let workspaceId = null;
     try {
-      for (const who of ["a", "b", "c"]) {
+      for (const who of ["a", "b", "c", "d"]) {
         const { data, error } = await admin.auth.admin.createUser({
           email: `cf-verify-${tag}-${who}@example.com`,
           password,
@@ -263,7 +291,7 @@ if (E2E) {
         if (error) throw new Error(`create test user: ${error.message}`);
         users.push(data.user);
       }
-      ok("Created three throwaway users (pre-confirmed, no emails sent)");
+      ok("Created four throwaway users (pre-confirmed, no emails sent)");
 
       const { data: profile } = await admin.from("profiles").select("full_name").eq("id", users[0].id).maybeSingle();
       if (profile?.full_name === "Verify A") ok("Profile created automatically by the sign-up trigger");
@@ -438,17 +466,380 @@ if (E2E) {
       const { data: bUpdate } = await b.from("projects").update({ name: "pwned" }).eq("id", project.id).select("id");
       if (!leaked && !bUpdate?.length) ok("Other agencies cannot read or change clients, projects or tasks");
       else fail("TENANT ISOLATION BROKEN for Phase 2 data");
+      /* ------------------------------ Phase 3 ------------------------------ */
+      const BUCKET = "project-assets";
+      const endpoint = resumableEndpoint(url);
+      const tokenOf = async (client) => (await client.auth.getSession()).data.session?.access_token;
+      const sha = (buf) => createHash("sha256").update(buf).digest("hex");
+      const assetPath = (id, file) => `${wsId}/${project.id}/${id}/${file}`;
+      const thumbOf = (p) => p.replace(/[^/]+$/, "thumbnail.jpg");
+
+      const resumableUpload = async (client, objectName, contentType, bytes) => {
+        const token = await tokenOf(client);
+        let posts = 0;
+        await new Promise((resolve, reject) => {
+          const up = new TusUpload(bytes, {
+            endpoint,
+            chunkSize: 6 * 1024 * 1024,
+            retryDelays: [0, 2000, 5000],
+            uploadDataDuringCreation: true,
+            headers: { apikey: publishable, authorization: `Bearer ${token}`, "x-upsert": "true" },
+            metadata: { bucketName: BUCKET, objectName, contentType, cacheControl: "3600" },
+            onBeforeRequest: (req) => {
+              if (req.getMethod() === "POST") posts += 1;
+            },
+            onError: (e) => reject(new Error(`resumable upload failed: ${e.message}`)),
+            onSuccess: () => resolve(),
+          });
+          up.start();
+        });
+        return posts;
+      };
+      const newAsset = async (client, uploaderId, { file, mime, size, root = null }) => {
+        const id = randomUUID();
+        const storage_path = assetPath(id, file);
+        const { error } = await client.from("assets").insert({
+          id,
+          workspace_id: wsId,
+          project_id: project.id,
+          name: file,
+          kind: mime.split("/")[0] === "application" ? "document" : mime.split("/")[0],
+          storage_path,
+          mime_type: mime,
+          size_bytes: size,
+          uploaded_by: uploaderId,
+          root_asset_id: root,
+        });
+        if (error) throw new Error(`create asset row: ${error.message}`);
+        return { id, path: storage_path };
+      };
+
+      // 1. Resumable upload of a real 7 MB file (two 6 MB-chunk requests).
+      const bytes = randomBytes(7 * 1024 * 1024);
+      const cut = await newAsset(c, users[2].id, { file: "verify-cut.mp4", mime: "video/mp4", size: bytes.length });
+      const posts = await resumableUpload(c, cut.path, "video/mp4", bytes);
+      if (posts === 1) ok("Resumable upload completed (7 MB in 6 MB chunks, one upload session)");
+      else fail(`Resumable upload used ${posts} upload sessions`);
+      const thumb = randomBytes(2048);
+      const { error: thumbError } = await c.storage
+        .from(BUCKET)
+        .upload(thumbOf(cut.path), thumb, { contentType: "image/jpeg" });
+      if (thumbError) fail(`Thumbnail upload failed: ${thumbError.message}`);
+      else ok("Thumbnail uploaded to the private bucket");
+
+      // 2. Storage rules during the upload.
+      const { error: outsiderUpload } = await b.storage
+        .from(BUCKET)
+        .upload(cut.path, randomBytes(10), { contentType: "video/mp4", upsert: true });
+      const { error: strayUpload } = await c.storage
+        .from(BUCKET)
+        .upload(`${wsId}/${project.id}/${randomUUID()}/stray.mp4`, randomBytes(10), { contentType: "video/mp4" });
+      if (outsiderUpload && strayUpload) ok("Uploads only reach the caller's own in-progress asset path");
+      else fail("STORAGE RULES BROKEN: an upload outside the caller's asset was accepted");
+
+      // 3. Finalize: the database checks the stored object's real size and type.
+      const { data: fin, error: finError } = await c.rpc("finalize_asset_upload", {
+        p_asset: cut.id,
+        p_duration_seconds: 12.5,
+        p_width: 1920,
+        p_height: 1080,
+        p_frame_rate: 25,
+      });
+      if (finError) throw new Error(`finalize: ${finError.message}`);
+      const { data: stored } = await admin.storage.from(BUCKET).info(cut.path);
+      const { data: cutRow } = await c
+        .from("assets")
+        .select("status, thumbnail_path, size_bytes")
+        .eq("id", cut.id)
+        .single();
+      if (fin?.status === "ready" && cutRow?.status === "ready" && Number(stored?.size) === bytes.length) {
+        ok("Finalized after verifying the stored object exists with the exact size");
+      } else
+        fail(`Finalize/size check failed: status=${cutRow?.status} stored=${stored?.size} expected=${bytes.length}`);
+      if (cutRow?.thumbnail_path === thumbOf(cut.path)) ok("Thumbnail path recorded on the asset");
+      else fail("Thumbnail path was not recorded");
+
+      const bad = await newAsset(c, users[2].id, { file: "verify-bad.mp4", mime: "video/mp4", size: 5000 });
+      await c.storage.from(BUCKET).upload(bad.path, randomBytes(4000), { contentType: "video/mp4" });
+      const { error: mismatch } = await c.rpc("finalize_asset_upload", { p_asset: bad.id });
+      if (mismatch && /does not match/.test(mismatch.message)) ok("A size mismatch is refused at finalization");
+      else fail("A file with the wrong size was accepted");
+      await c.storage.from(BUCKET).remove([bad.path]);
+      await c.from("assets").delete().eq("id", bad.id);
+
+      const { error: overwrite } = await c.storage
+        .from(BUCKET)
+        .upload(cut.path, randomBytes(10), { contentType: "video/mp4", upsert: true });
+      if (overwrite) ok("A completed file cannot be overwritten");
+      else fail("A completed file was overwritten");
+
+      // 4. Signed URL download returns the exact bytes; other agencies get nothing.
+      const { data: signedUrl, error: signError } = await c.storage.from(BUCKET).createSignedUrl(cut.path, 60);
+      if (signError) throw new Error(`signed URL: ${signError.message}`);
+      const downloaded = Buffer.from(await (await fetch(signedUrl.signedUrl)).arrayBuffer());
+      if (sha(downloaded) === sha(bytes)) ok("Signed URL download returns the exact uploaded bytes");
+      else fail("Downloaded bytes differ from the upload");
+      const [{ data: bAsset }, { error: bDownload }, { error: bSign }] = await Promise.all([
+        b.from("assets").select("id").eq("id", cut.id),
+        b.storage.from(BUCKET).download(cut.path),
+        b.storage.from(BUCKET).createSignedUrl(cut.path, 60),
+      ]);
+      if (!bAsset?.length && bDownload && bSign) ok("Another workspace cannot read, download or sign the file");
+      else fail("TENANT ISOLATION BROKEN: another workspace reached the file");
+
+      // 5. Versions.
+      const v2Bytes = randomBytes(64 * 1024);
+      const v2 = await newAsset(c, users[2].id, {
+        file: "verify-cut-v2.mp4",
+        mime: "video/mp4",
+        size: v2Bytes.length,
+        root: cut.id,
+      });
+      await resumableUpload(c, v2.path, "video/mp4", v2Bytes);
+      const { error: v2Fin } = await c.rpc("finalize_asset_upload", { p_asset: v2.id, p_duration_seconds: 2 });
+      const { data: v2Row } = await c.from("assets").select("version_number, root_asset_id").eq("id", v2.id).single();
+      if (!v2Fin && v2Row?.version_number === 2 && v2Row.root_asset_id === cut.id)
+        ok("New version numbered 2 and linked to its original");
+      else fail(`Version creation failed: ${v2Fin?.message ?? JSON.stringify(v2Row)}`);
+      const nested = randomUUID();
+      const { error: nestedError } = await c.from("assets").insert({
+        id: nested,
+        workspace_id: wsId,
+        project_id: project.id,
+        name: "x.mp4",
+        kind: "video",
+        storage_path: assetPath(nested, "x.mp4"),
+        mime_type: "video/mp4",
+        size_bytes: 10,
+        uploaded_by: users[2].id,
+        root_asset_id: v2.id,
+      });
+      if (nestedError) ok("A version of a version is refused (versions attach to the original)");
+      else fail("A version was attached to another version");
+
+      // 6. Client user (role client) for privacy checks.
+      const clientToken = randomBytes(32).toString("base64url");
+      const { error: clientInvite } = await a.from("workspace_invitations").insert({
+        workspace_id: wsId,
+        email: users[3].email,
+        role: "client",
+        client_id: client.id,
+        token_hash: hash(clientToken),
+        invited_by: users[0].id,
+      });
+      if (clientInvite) throw new Error(`client invitation: ${clientInvite.message}`);
+      const d = await signIn(users[3]);
+      const { error: clientAccept } = await d.rpc("accept_invitation", { p_token: clientToken });
+      if (clientAccept) throw new Error(`client accept: ${clientAccept.message}`);
+      await c.from("projects").update({ client_visible: true }).eq("id", project.id);
+      await c.from("assets").update({ shared_with_client: true }).eq("id", v2.id);
+
+      // 7. Realtime: staff (a) and client (d) subscribe; outsider (b) must receive nothing.
+      const subscribe = async (client, label) => {
+        client.realtime.setAuth(await tokenOf(client));
+        const events = [];
+        const channel = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`Realtime ${label}: subscription timed out`)), 15000);
+          const ch = client
+            .channel(`verify-${label}-${tag}`)
+            .on(
+              "postgres_changes",
+              { event: "INSERT", schema: "public", table: "review_comments", filter: `asset_id=eq.${v2.id}` },
+              (p) => events.push(p.new),
+            )
+            .subscribe((status, err) => {
+              if (status === "SUBSCRIBED") {
+                clearTimeout(timer);
+                resolve(ch);
+              } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                clearTimeout(timer);
+                reject(new Error(`Realtime ${label}: ${status} ${err?.message ?? ""}`));
+              }
+            });
+        });
+        channels.push([client, channel]);
+        return events;
+      };
+      const [aEvents, dEvents, bEvents] = await Promise.all([
+        subscribe(a, "staff"),
+        subscribe(d, "client"),
+        subscribe(b, "outsider"),
+      ]);
+      ok("Realtime subscriptions established for staff, client and outsider sessions");
+
+      const { data: internal, error: internalError } = await c
+        .from("review_comments")
+        .insert({
+          workspace_id: wsId,
+          asset_id: v2.id,
+          author_id: users[2].id,
+          body: "Internal: grade is off",
+          is_internal: true,
+        })
+        .select("id")
+        .single();
+      const { data: pub, error: pubError } = await c
+        .from("review_comments")
+        .insert({
+          workspace_id: wsId,
+          asset_id: v2.id,
+          author_id: users[2].id,
+          body: "Logo too small",
+          timestamp_seconds: 1.25,
+          annotation: { x: 0.5, y: 0.25 },
+        })
+        .select("id, timestamp_seconds, annotation")
+        .single();
+      if (internalError || pubError) throw new Error(`comments: ${(internalError ?? pubError).message}`);
+      if (Number(pub.timestamp_seconds) === 1.25 && pub.annotation?.x === 0.5)
+        ok("Timestamped comment with a frame pin saved");
+      else fail("Timestamp/annotation not stored as sent");
+
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline && (aEvents.length < 2 || dEvents.length < 1))
+        await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 1500)); // allow any (incorrect) extra deliveries to arrive
+      const aIds = aEvents.map((e) => e.id);
+      if (aIds.includes(internal.id) && aIds.includes(pub.id))
+        ok("A second authorized session received both comments live via Realtime");
+      else
+        fail(
+          `Realtime delivery to staff failed (received ${aEvents.length} of 2)`,
+          "Check Database → Publications → supabase_realtime includes review_comments",
+        );
+      const dIds = dEvents.map((e) => e.id);
+      if (dIds.includes(pub.id) && !dIds.includes(internal.id))
+        ok("The client received the public comment live but not the internal note");
+      else fail(`PRIVACY: client Realtime events = ${JSON.stringify(dIds)}`);
+      if (bEvents.length === 0) ok("Another workspace received no Realtime events");
+      else fail("TENANT ISOLATION BROKEN: another workspace received Realtime comment events");
+
+      // 8. Replies, edits, resolve, privacy, timestamp validation.
+      const { error: replyError } = await a
+        .from("review_comments")
+        .insert({ workspace_id: wsId, asset_id: v2.id, parent_id: pub.id, author_id: users[0].id, body: "Will fix" });
+      const { data: edited } = await c
+        .from("review_comments")
+        .update({ body: "Logo too small (edited)" })
+        .eq("id", pub.id)
+        .select("edited_at")
+        .single();
+      const { error: foreignEdit } = await a.from("review_comments").update({ body: "hijack" }).eq("id", pub.id);
+      const { data: resolved } = await a
+        .from("review_comments")
+        .update({ resolved_at: new Date().toISOString() })
+        .eq("id", pub.id)
+        .select("resolved_by")
+        .single();
+      // RLS hides other people's comments from a client's UPDATE (0 rows), or the trigger refuses it.
+      const { data: clientResolveRows, error: clientResolveError } = await d
+        .from("review_comments")
+        .update({ resolved_at: null })
+        .eq("id", pub.id)
+        .select("id");
+      const clientResolve = Boolean(clientResolveError) || (clientResolveRows ?? []).length === 0;
+      if (!replyError) ok("Threaded reply saved");
+      else fail(`Reply failed: ${replyError.message}`);
+      if (edited?.edited_at && foreignEdit) ok("The author edited the comment; another user could not");
+      else fail("Comment edit rules not enforced");
+      if (resolved?.resolved_by === users[0].id && clientResolve)
+        ok("Staff resolved the thread (resolver recorded); the client could not");
+      else fail("Resolve rules not enforced");
+      const { data: clientView } = await d.from("review_comments").select("id, is_internal").eq("asset_id", v2.id);
+      if (clientView?.length === 2 && clientView.every((r) => !r.is_internal))
+        ok("Internal notes stay private from the client");
+      else fail(`PRIVACY: client sees ${JSON.stringify(clientView)}`);
+      const { error: lateError } = await c.from("review_comments").insert({
+        workspace_id: wsId,
+        asset_id: cut.id,
+        author_id: users[2].id,
+        body: "Too late",
+        timestamp_seconds: 99,
+      });
+      if (lateError && /past the end/.test(lateError.message)) ok("Timestamps past the media duration are refused");
+      else fail("A timestamp beyond the media duration was accepted");
+
+      // 9. Deletion removes files, thumbnails, versions and rows.
+      const paths = [cut.path, thumbOf(cut.path), v2.path, thumbOf(v2.path)];
+      const { error: removeError } = await c.storage.from(BUCKET).remove(paths);
+      const leftovers = [];
+      for (const folder of [cut.path, v2.path].map((p) => p.replace(/\/[^/]+$/, ""))) {
+        const { data: files } = await admin.storage.from(BUCKET).list(folder);
+        leftovers.push(...(files ?? []).filter((f) => f.id !== null));
+      }
+      const { error: deleteRowError } = await c.from("assets").delete().eq("id", cut.id);
+      const { data: rowsLeft } = await admin.from("assets").select("id").in("id", [cut.id, v2.id]);
+      if (!removeError && leftovers.length === 0 && !deleteRowError && rowsLeft?.length === 0) {
+        ok("Deleting removed every file, thumbnail and version, then the records");
+      } else fail(`Deletion incomplete: storage=${removeError?.message ?? leftovers.length} rows=${rowsLeft?.length}`);
+
+      const { data: p3log } = await a.from("activity_log").select("action").eq("workspace_id", wsId);
+      const p3actions = new Set((p3log ?? []).map((l) => l.action));
+      const p3missing = [
+        "asset.uploaded",
+        "asset.version_added",
+        "comment.created",
+        "comment.resolved",
+        "asset.deleted",
+      ].filter((x) => !p3actions.has(x));
+      if (p3missing.length === 0) ok("Activity log recorded uploads, versions, comments, resolutions and deletion");
+      else fail(`Activity log is missing: ${p3missing.join(", ")}`);
     } catch (error) {
       fail(`End-to-end test stopped: ${error.message}`);
     } finally {
+      for (const [client, channel] of channels) await client.removeChannel(channel).catch(() => undefined);
+      // Storage first (it is not removed by database cascades), then rows, then users.
+      let storageLeft = 0;
+      if (workspaceId) storageLeft = await removeStoragePrefix(admin, "project-assets", workspaceId);
       if (workspaceId) await admin.from("workspaces").delete().eq("id", workspaceId);
       for (const u of users) await admin.auth.admin.deleteUser(u.id);
-      if (users.length) console.log("  · Cleaned up test users and workspace");
+      if (users.length) {
+        if (storageLeft === 0) console.log("  · Cleaned up test users, workspace and storage objects");
+        else
+          fail(
+            `Cleanup left ${storageLeft} storage objects under ${workspaceId}/ in project-assets — remove them in the dashboard`,
+          );
+      }
     }
   }
 }
 
 finish();
+
+/** Same rule as src/lib/media/file-types.ts resumableEndpoint(). */
+function resumableEndpoint(supabaseUrl) {
+  const u = new URL(supabaseUrl);
+  const m = /^([a-z0-9]{20})\.supabase\.co$/.exec(u.hostname);
+  return `${m ? `https://${m[1]}.storage.supabase.co` : u.origin}/storage/v1/upload/resumable`;
+}
+
+/** Recursively removes every object under `prefix`; returns how many remain afterwards. */
+async function removeStoragePrefix(adminClient, bucket, prefix) {
+  const files = [];
+  const walk = async (folder) => {
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await adminClient.storage.from(bucket).list(folder, { limit: 1000, offset });
+      if (error || !data) return;
+      for (const entry of data) {
+        if (entry.id === null) await walk(`${folder}/${entry.name}`);
+        else files.push(`${folder}/${entry.name}`);
+      }
+      if (data.length < 1000) return;
+    }
+  };
+  await walk(prefix);
+  for (let i = 0; i < files.length; i += 1000) await adminClient.storage.from(bucket).remove(files.slice(i, i + 1000));
+  const remaining = [];
+  const recount = async (folder) => {
+    const { data } = await adminClient.storage.from(bucket).list(folder, { limit: 1000 });
+    for (const entry of data ?? []) {
+      if (entry.id === null) await recount(`${folder}/${entry.name}`);
+      else remaining.push(entry.name);
+    }
+  };
+  await recount(prefix);
+  return remaining.length;
+}
 
 function finish() {
   console.log(`\n${results.pass} passed, ${results.warn} warnings, ${results.fail} failed`);

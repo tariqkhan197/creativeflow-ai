@@ -59,6 +59,8 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 | `decide_approval(p_approval, p_decision, p_note)` | definer  | Approve / request changes; creates revision round + notification       |
 | `workspace_overview(p_workspace)`                 | invoker  | Dashboard metrics from real rows (finance only for managers+)          |
 | `get_invitation(p_token)`                         | definer  | Invite page lookup: workspace, email, role, inviter, status (anon OK)  |
+| `finalize_asset_upload(p_asset, …metadata)`       | definer  | Marks an upload ready after checking the stored object's size and type |
+| `asset_upload_constraints()`                      | definer  | Bucket upload limit and allowed MIME types for the upload UI           |
 
 ## Access matrix (RLS)
 
@@ -92,6 +94,7 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 - `20261001000100_explicit_api_grants.sql`: explicit Data API grants, so the schema also works on projects created
   with automatic table grants turned off. `npm run test:db` runs the suite in both modes.
 - `20261002000000_phase2_team_projects.sql`: Phase 2 rules, listed below.
+- `20261003000000_phase3_media_review.sql`: Phase 3 rules, listed below.
 
 ### Phase 2 database rules
 
@@ -105,3 +108,21 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 - Never edit an applied migration. Add a new file: `npx supabase migration new <name>`.
 - Run `npm run test:db` after every schema change; add a test for every new policy.
 - After pushing, regenerate types: `npm run db:types`.
+
+### Phase 3 database rules
+
+| Rule                                                                                                                                                                                       | Where                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| New assets start `uploading`; path is exactly `{ws}/{project}/{asset id}/{safe name}`; MIME allowlist decides `kind`; size within the bucket limit                                         | `assets_prepare` trigger, `assets_kind_matches_mime`          |
+| Status `uploading → ready/failed`, `failed → uploading`; file, type, project, size and version immutable; metadata fixed once ready                                                        | `assets_prepare` trigger                                      |
+| Versions attach to an original in the same project with the same kind; numbered under a row lock; unique (original, version)                                                               | `assets_prepare`, `assets_version_unique`                     |
+| Upload/overwrite only the caller's own in-progress asset file or thumbnail; completed files can't be overwritten                                                                           | storage policies `upload/update own in-progress asset`        |
+| Read: staff of the workspace, or anyone who may view the asset (file or thumbnail)                                                                                                         | storage policy `project-assets: read`                         |
+| Comments only on ready files; replies one level deep on the same file, inheriting internal visibility; timestamps only on video/audio and ≤ duration; pins `{x,y}` in 0..1 on video/images | `review_comments_prepare`, `review_comments_annotation_valid` |
+| Only the author edits text (`edited_at` set by the database); only staff resolve; resolver recorded by the database; position/visibility immutable                                         | `review_comments_prepare`                                     |
+| Activity for uploads, versions, deletions (not cascade noise), comments and resolutions                                                                                                    | `assets_audit`, `review_comments_audit`                       |
+| `asset_review_summary` view: latest ready version per original, version count, open comments (RLS of the caller applies, `security_invoker`)                                               | view                                                          |
+
+> Fixed in this migration: the initial storage read policy compared `assets.storage_path` with an unqualified
+> `name`, which resolved to `assets.name`. That made its client branch never match. It is now `objects.name`, and a
+> DB test covers client access.

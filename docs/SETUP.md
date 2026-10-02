@@ -76,6 +76,24 @@ heavily rate-limited and is meant for testing only.
 When you pull new code that adds files to `supabase/migrations/`, run `npx supabase migration list`,
 `npx supabase db push --dry-run` and then `npx supabase db push`. Only the new files are applied.
 
+### Upload size limit
+
+The Storage upload limit is set per project (Dashboard → Storage → Settings → "Upload file size limit") and depends
+on your plan. On the Free plan it is 50 MB. The bucket limit is read automatically, but the project-wide limit
+cannot be read through the API. To reject oversize files before an upload starts, set it in `.env.local`:
+
+```bash
+STORAGE_MAX_UPLOAD_BYTES=52428800   # 50 MB, use your project's value
+```
+
+Without it, Supabase still enforces the limit during the upload, and the app shows a clear "larger than your Supabase
+project allows" error.
+
+### Realtime
+
+The Phase 3 migration adds `review_comments` to the `supabase_realtime` publication. Check it under Database →
+Publications → `supabase_realtime`. `npm run verify:supabase -- --e2e` confirms live delivery end to end.
+
 ## 5. Verify the project
 
 ```bash
@@ -108,10 +126,14 @@ All of these are server-only variables.
 ```bash
 npm run lint         # ESLint
 npm run typecheck    # Next route types + TypeScript
+npm run test:unit    # Vitest unit + integration tests (includes a real TUS server)
 npm run test:db      # migration + RLS tests in in-process Postgres (no Docker needed)
 npm run build        # production build
-npm run check        # lint + typecheck + test:db
+npm run check        # lint + typecheck + test:unit + test:db
+npm run test:browser # review UI in Chromium (after `npm run build`; run `npx playwright install chromium` once)
 ```
+
+The manual browser checklist for each phase is in [docs/TESTING.md](TESTING.md).
 
 ## 9. Deploy (Vercel)
 

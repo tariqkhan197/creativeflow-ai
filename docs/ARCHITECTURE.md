@@ -104,13 +104,35 @@ RLS and triggers stay the final authority, and `src/lib/db-errors.ts` maps datab
 
 ## Media pipeline (Phase 3)
 
-- Files go to the private `project-assets` bucket under `{workspace_id}/{project_id}/{asset_id}/{file}`. Storage
-  policies check workspace membership from the first path segment.
-- Uploads: the browser requests a signed upload URL from a Server Action (which checks role + project), uploads
-  directly to Storage (resumable/TUS for large video), then the server marks the `assets` row `ready`.
-- Playback: short-lived signed URLs generated server-side per viewer.
-- Review comments store `timestamp_seconds` (and an optional frame annotation) and stream live through Supabase
-  Realtime (RLS applies to realtime subscriptions).
+```
+Browser                      Next.js (Server Actions)                Supabase
+───────                      ────────────────────────                ────────
+pick file ─▶ createAssetUpload ─ validate type/size, derive ─▶ INSERT assets (status uploading,
+             (zod, role)         workspace + project + path         path {ws}/{project}/{asset}/{file})
+probe file (duration, size,
+fps, JPEG thumbnail)
+TUS upload, 6 MB chunks ───────────────────────────────────────▶ Storage (RLS: only the uploader's
+   user JWT + publishable key                                      in-progress asset path)
+thumbnail upload ──────────────────────────────────────────────▶ Storage ({…}/thumbnail.jpg)
+             finalizeAssetUpload ──────────────────────────────▶ finalize_asset_upload(): checks the
+                                                                    stored object's real size/type,
+                                                                    sets ready + metadata + thumbnail
+review page ◀─ signed URLs (1 h, renewed) ◀─ getAssetMediaUrls ◀─ RLS on assets + storage.objects
+comments ◀──── Realtime postgres_changes (RLS per subscriber) ◀── review_comments
+```
+
+- Workspace and project are always derived on the server. The database also rejects any path that isn't exactly
+  `{workspace}/{project}/{asset id}/{safe name}`.
+- A failed upload keeps its record (status `failed`) and is retried on the same record and path, so there are no
+  duplicates. Cancelling removes whatever reached Storage before removing the record.
+- Deleting an asset or project removes Storage objects first and checks the folders are empty. Only then are the
+  rows deleted. A partial failure keeps the records so the action can be retried, and nothing is orphaned silently.
+- Signed URLs are created after an access check. The player renews them before expiry, and once more after a load
+  error. A repeat failure shows an honest "can't be previewed / couldn't be loaded" state with a download option.
+- Realtime: the browser authenticates its socket with the user's own token. Supabase evaluates the
+  `review_comments` RLS policy for every subscriber, so clients never receive internal notes and other workspaces
+  receive nothing. After a reconnect the panel re-fetches the thread. Updates are merged "newer wins" by parsed
+  `updated_at`.
 
 ## AI generation (Phase 5)
 
