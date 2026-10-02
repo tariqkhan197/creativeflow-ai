@@ -38,6 +38,7 @@ await build({
   alias: {
     "@/lib/actions/assets": path.join(import.meta.dirname, "stub-asset-actions.ts"),
     "@/lib/actions/comments": path.join(import.meta.dirname, "stub-comment-actions.ts"),
+    "@/lib/supabase/client": path.join(import.meta.dirname, "stub-supabase-client.ts"),
   },
   define: { "process.env.NODE_ENV": '"development"' },
   logLevel: "warning",
@@ -347,6 +348,42 @@ const makeWebm = `(async () => {
   await page.getByRole("button", { name: "Reopen", exact: true }).click();
   await page.getByRole("tab", { name: /^open/ }).click();
   check("reopening returns it to Open", (await page.locator("text=make it 20% bigger").count()) === 1);
+
+  // Live updates (Realtime events driven through the test seam).
+  check("the panel reports a live connection", (await page.locator("text=Live").count()) >= 1);
+  const remote = {
+    id: "00000000-0000-4000-8000-000000000001",
+    asset_id: "a",
+    parent_id: null,
+    author_id: "someone-else",
+    body: "Live from another window",
+    timestamp_seconds: "0.500",
+    annotation: null,
+    is_internal: false,
+    resolved_at: null,
+    resolved_by: null,
+    edited_at: null,
+    created_at: "2026-10-02 11:00:00.123456+00",
+    updated_at: "2026-10-02 11:00:00.123456+00",
+  };
+  await page.evaluate((r) => window.__realtime.emit("INSERT", { new: r }), remote);
+  await page.waitForSelector("text=Live from another window");
+  check(
+    "a Realtime INSERT appears with its timecode",
+    (await page.locator('button[aria-label="Jump to 0:00"]').count()) === 1,
+  );
+  await page.evaluate((r) => window.__realtime.emit("INSERT", { new: r }), remote);
+  await page.waitForTimeout(200);
+  check("a duplicate event is de-duplicated", (await page.locator("text=Live from another window").count()) === 1);
+  await page.evaluate(
+    (r) => window.__realtime.emit("UPDATE", { new: { ...r, body: "Old echo", updated_at: "2026-10-02 10:00:00+00" } }),
+    remote,
+  );
+  await page.waitForTimeout(200);
+  check("a stale update is ignored", (await page.locator("text=Live from another window").count()) === 1);
+  await page.evaluate((r) => window.__realtime.emit("DELETE", { old: { id: r.id } }), remote);
+  await page.waitForTimeout(200);
+  check("a Realtime DELETE removes the comment", (await page.locator("text=Live from another window").count()) === 0);
 
   await page.locator('button[aria-label="Delete comment"]').first().click();
   await page.click('[role="alertdialog"] button:has-text("Delete")');

@@ -95,3 +95,23 @@ describe("taskSchema", () => {
     expect(taskSchema.safeParse({ projectId: uuid, title: "x", assigneeId: "bob" }).success).toBe(false);
   });
 });
+
+import { reviewFiltersSchema } from "./reviews";
+
+describe("reviewFiltersSchema", () => {
+  it("keeps valid filters and drops invalid ones", () => {
+    expect(reviewFiltersSchema.parse({ kind: "video", open: "1", sort: "comments", q: " cut " })).toMatchObject({
+      kind: "video",
+      open: "1",
+      sort: "comments",
+      q: "cut",
+    });
+    expect(reviewFiltersSchema.parse({ kind: "exe", open: "yes", sort: "x", project: "nope" })).toEqual({
+      q: undefined,
+      kind: undefined,
+      open: undefined,
+      sort: "recent",
+      project: undefined,
+    });
+  });
+});

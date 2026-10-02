@@ -7,6 +7,7 @@ import {
   buildThreads,
   countThreads,
   isPoint,
+  reconcileComments,
   removeComment,
   snippet,
   upsertComment,
@@ -16,6 +17,7 @@ import {
 import { timestampError } from "@/lib/validation/comments";
 import { CommentsPanel, type Person } from "./comments-panel";
 import { ReviewViewer, type ViewerAsset } from "./review-viewer";
+import { useLiveComments } from "./use-live-comments";
 import type { PinPick, ReviewMarker, ReviewPin, ViewerHandle } from "./types";
 import type { SignedMedia } from "./use-signed-media";
 
@@ -52,6 +54,11 @@ export function ReviewWorkspace({
 
   const merge = useCallback((c: CommentRecord) => setComments((m) => upsertComment(m, c)), []);
   const remove = useCallback((id: string) => setComments((m) => removeComment(m, id)), []);
+  const live = useLiveComments(asset.id, {
+    onUpsert: merge,
+    onDelete: remove,
+    onResync: (rows) => setComments((m) => reconcileComments(m, rows)),
+  });
 
   const topLevel = useMemo(() => [...comments.values()].filter((c) => c.parent_id === null), [comments]);
   const markers: ReviewMarker[] = useMemo(
@@ -147,6 +154,7 @@ export function ReviewWorkspace({
           currentUserId={currentUserId}
           canManage={canManage}
           activeId={activeId}
+          live={live}
           currentTime={time}
           draftPin={draftPin}
           pickMode={pickMode}

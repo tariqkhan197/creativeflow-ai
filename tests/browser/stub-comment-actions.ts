@@ -83,3 +83,7 @@ export async function deleteComment(id: string): Promise<{ ok: true } | { ok: fa
   store().delete(id);
   return { ok: true };
 }
+
+export async function listComments(assetId: string) {
+  return { ok: true as const, comments: [...store().values()].filter((c) => c.asset_id === assetId) };
+}

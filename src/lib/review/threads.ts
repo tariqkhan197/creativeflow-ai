@@ -102,3 +102,40 @@ export function snippet(body: string, max = 60): string {
   const line = body.replace(/\s+/g, " ").trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
+
+/**
+ * Replace local state with the server's list (after a reconnect), keeping a
+ * local row only if it is newer than the server's copy of it.
+ */
+export function reconcileComments(
+  local: Map<string, CommentRecord>,
+  server: CommentRecord[],
+): Map<string, CommentRecord> {
+  const next = new Map<string, CommentRecord>();
+  for (const row of server) {
+    const mine = local.get(row.id);
+    next.set(row.id, mine && timestampMs(mine.updated_at) > timestampMs(row.updated_at) ? mine : row);
+  }
+  return next;
+}
+
+/** Realtime rows may carry numeric columns as strings; normalise to the REST shape. */
+export function normalizeRealtimeComment(row: Record<string, unknown>): CommentRecord | null {
+  if (typeof row.id !== "string" || typeof row.asset_id !== "string" || typeof row.body !== "string") return null;
+  const ts = row.timestamp_seconds;
+  return {
+    id: row.id,
+    asset_id: row.asset_id,
+    parent_id: (row.parent_id as string | null) ?? null,
+    author_id: (row.author_id as string | null) ?? null,
+    body: row.body,
+    timestamp_seconds: ts === null || ts === undefined ? null : Number(ts),
+    annotation: (row.annotation as CommentRecord["annotation"]) ?? null,
+    is_internal: Boolean(row.is_internal),
+    resolved_at: (row.resolved_at as string | null) ?? null,
+    resolved_by: (row.resolved_by as string | null) ?? null,
+    edited_at: (row.edited_at as string | null) ?? null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
+}

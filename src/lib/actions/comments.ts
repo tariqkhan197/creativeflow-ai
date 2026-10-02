@@ -5,6 +5,7 @@ import { dbErrorMessage } from "@/lib/db-errors";
 import { isStaff } from "@/lib/permissions";
 import type { CommentRecord } from "@/lib/review/threads";
 import { createClient } from "@/lib/supabase/server";
+import { assetIdSchema } from "@/lib/validation/assets";
 import {
   addCommentSchema,
   commentIdSchema,
@@ -149,4 +150,22 @@ export async function setCommentResolved(input: unknown): Promise<CommentResult>
   if (!data.length) return { ok: false, error: "This comment no longer exists." };
   touch();
   return { ok: true, comment: data[0] as CommentRecord };
+}
+
+/** Current comments on an asset (RLS-scoped), used to re-sync after a Realtime reconnect. */
+export async function listComments(
+  assetId: string,
+): Promise<{ ok: true; comments: CommentRecord[] } | { ok: false; error: string }> {
+  const { active } = await getWorkspaceContext();
+  const parsed = assetIdSchema.safeParse({ assetId });
+  if (!parsed.success) return { ok: false, error: "Invalid file." };
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("review_comments")
+    .select(COLUMNS)
+    .eq("asset_id", assetId)
+    .eq("workspace_id", active.id)
+    .order("created_at");
+  if (error) return { ok: false, error: "Comments couldn't be refreshed." };
+  return { ok: true, comments: data as CommentRecord[] };
 }

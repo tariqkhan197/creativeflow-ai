@@ -58,6 +58,18 @@ function sentence(entry: ActivityEntry, nameOf: (userId: string | null) => strin
       return `added task ${quoted(m.title)}`;
     case "task.completed":
       return `completed task ${quoted(m.title)}`;
+    case "asset.uploaded":
+      return `uploaded ${quoted(m.name)}`;
+    case "asset.version_added":
+      return `added version ${String(m.version ?? "")} of ${quoted(m.name)}`;
+    case "asset.deleted":
+      return Number(m.version) > 1
+        ? `deleted version ${String(m.version)} of ${quoted(m.name)}`
+        : `deleted ${quoted(m.name)}`;
+    case "comment.created":
+      return m.internal ? "added an internal note" : m.reply ? "replied to a comment" : "commented on a file";
+    case "comment.resolved":
+      return "resolved a comment";
     case "approval.approved":
       return "approved a deliverable";
     case "approval.changes_requested":
@@ -77,6 +89,16 @@ export function activityHref(entry: ActivityEntry): string | null {
     return typeof projectId === "string" ? `/app/projects/${projectId}` : null;
   }
   if (entry.entity_type === "member" || entry.entity_type === "invitation") return "/app/team";
+  if (entry.entity_type === "asset") {
+    const projectId = meta(entry).project_id;
+    return typeof projectId === "string" ? `/app/projects/${projectId}/assets/${entry.entity_id}` : null;
+  }
+  if (entry.entity_type === "comment") {
+    const m = meta(entry);
+    return typeof m.project_id === "string" && typeof m.asset_id === "string"
+      ? `/app/projects/${m.project_id}/assets/${m.asset_id}#comment-${entry.entity_id}`
+      : null;
+  }
   return null;
 }
 

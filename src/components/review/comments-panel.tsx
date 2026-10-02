@@ -31,6 +31,7 @@ import {
 import { cn, formatRelativeTime, initials } from "@/lib/utils";
 import type { AssetKind } from "@/types/database";
 import type { PinPick } from "./types";
+import type { LiveStatus } from "./use-live-comments";
 
 export type Person = { id: string; name: string };
 
@@ -44,6 +45,7 @@ type PanelProps = {
   currentUserId: string;
   canManage: boolean;
   activeId: string | null;
+  live: LiveStatus;
   // composer
   currentTime: number;
   draftPin: PinPick | null;
@@ -79,6 +81,24 @@ export const CommentsPanel = forwardRef<HTMLTextAreaElement, PanelProps>(functio
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <MessageSquareIcon className="size-4" /> Comments
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 text-[11px] font-normal",
+              props.live === "live" ? "text-success" : "text-muted-foreground",
+            )}
+            title={props.live === "live" ? "New comments appear automatically" : "Live updates are reconnecting"}
+          >
+            <span
+              className={cn("size-1.5 rounded-full", props.live === "live" ? "bg-success" : "bg-muted-foreground")}
+            />
+            {props.live === "live"
+              ? "Live"
+              : props.live === "reconnecting"
+                ? "Reconnecting…"
+                : props.live === "offline"
+                  ? "Offline"
+                  : "Connecting…"}
+          </span>
         </h2>
         <div className="flex gap-1 rounded-lg border p-0.5 text-xs" role="tablist" aria-label="Filter comments">
           {(["open", "resolved", "all"] as const).map((f) => (

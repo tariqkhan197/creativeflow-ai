@@ -39,7 +39,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Projects", href: "/app/projects", icon: "projects", roles: STAFF },
       { label: "Clients", href: "/app/clients", icon: "clients", roles: STAFF },
-      { label: "Reviews", href: "/app/reviews", icon: "reviews", plannedPhase: 3 },
+      { label: "Reviews", href: "/app/reviews", icon: "reviews", roles: STAFF },
       { label: "Approvals", href: "/app/approvals", icon: "approvals", plannedPhase: 4 },
       { label: "AI Studio", href: "/app/ai-studio", icon: "ai", plannedPhase: 5, roles: STAFF },
     ],

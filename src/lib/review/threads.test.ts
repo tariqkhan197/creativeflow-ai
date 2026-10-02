@@ -85,3 +85,25 @@ describe("timestampMs", () => {
     expect(map.get("x")!.body).toBe("newer");
   });
 });
+
+import { normalizeRealtimeComment, reconcileComments } from "./threads";
+
+describe("reconcileComments", () => {
+  it("takes the server list but keeps a newer local copy", () => {
+    const local = new Map([
+      ["a", c("a", { body: "local newer", updated_at: "2026-10-02T12:00:00Z" })],
+      ["gone", c("gone")],
+    ]);
+    const next = reconcileComments(local, [c("a", { updated_at: "2026-10-02T11:00:00Z" }), c("b")]);
+    expect([...next.keys()].sort()).toEqual(["a", "b"]);
+    expect(next.get("a")!.body).toBe("local newer");
+  });
+});
+
+describe("normalizeRealtimeComment", () => {
+  it("converts string numerics and rejects malformed rows", () => {
+    const row = normalizeRealtimeComment({ ...c("x"), timestamp_seconds: "12.250", annotation: { x: 0.1, y: 0.2 } });
+    expect(row!.timestamp_seconds).toBe(12.25);
+    expect(normalizeRealtimeComment({ id: 1 })).toBeNull();
+  });
+});
