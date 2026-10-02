@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { z } from "zod";
 import { dbErrorMessage } from "@/lib/db-errors";
+import { removeProjectObjects } from "@/lib/media/storage-cleanup";
 import { canManageWork, isStaff } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -156,6 +157,19 @@ export async function deleteProject(projectId: string): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, error: "Invalid project." };
 
   const supabase = await createClient();
+  const { data: exists } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", parsed.data.projectId)
+    .eq("workspace_id", active.id)
+    .maybeSingle();
+  if (!exists) return { ok: false, error: "This project no longer exists." };
+
+  // Files and thumbnails go first; if Storage can't be emptied the project is
+  // kept, so nothing is orphaned and the delete can simply be retried.
+  const storageError = await removeProjectObjects(supabase, active.id, parsed.data.projectId);
+  if (storageError) return { ok: false, error: storageError };
+
   const { data, error } = await supabase
     .from("projects")
     .delete()

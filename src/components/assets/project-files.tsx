@@ -1,6 +1,7 @@
 import { AlertTriangleIcon, FilesIcon, Loader2Icon, MessageSquareIcon, XIcon } from "lucide-react";
 import { ConfirmAction } from "@/components/app/confirm-action";
 import { EmptyState } from "@/components/app/empty-state";
+import { AssetCardMenu } from "@/components/assets/asset-card-menu";
 import { AssetKindIcon } from "@/components/assets/asset-kind-icon";
 import { ResumeUploadButton } from "@/components/assets/resume-upload-button";
 import { UploadDropzone } from "@/components/assets/upload-dropzone";
@@ -25,12 +26,14 @@ export async function ProjectFiles({
   currentUserId,
   archived,
   people,
+  canManage,
 }: {
   projectId: string;
   workspaceId: string;
   currentUserId: string;
   archived: boolean;
   people: { id: string; name: string }[];
+  canManage: boolean;
 }) {
   const supabase = await createClient();
   const [{ data: rows, error }, { data: summary }, limit] = await Promise.all([
@@ -57,6 +60,11 @@ export async function ProjectFiles({
     : { data: [] };
   const thumbUrl = (path: string | null) => (path ? signed?.find((s) => s.path === path)?.signedUrl : undefined);
   const openCount = (rootId: string) => summary?.find((s) => s.root_asset_id === rootId)?.open_comment_count ?? 0;
+  // Non-managers may only delete files whose every version they uploaded (Storage rule).
+  const allUploadedBy = (rootId: string, userId: string) =>
+    (rows as AssetListRow[])
+      .filter((r) => r.id === rootId || r.root_asset_id === rootId)
+      .every((r) => r.uploaded_by === userId);
   const nameOf = (id: string | null) => people.find((p) => p.id === id)?.name ?? "A teammate";
 
   return (
@@ -147,9 +155,18 @@ export async function ProjectFiles({
                     ) : null}
                   </div>
                   <div className="grid gap-1.5 p-3">
-                    <p className="truncate text-sm font-medium" title={latest.name}>
-                      {latest.name}
-                    </p>
+                    <div className="flex items-center gap-1">
+                      <p className="min-w-0 flex-1 truncate text-sm font-medium" title={latest.name}>
+                        {latest.name}
+                      </p>
+                      <AssetCardMenu
+                        rootId={rootId}
+                        name={latest.name}
+                        versionCount={versions.length + unfinished.filter((u) => u.root_asset_id === rootId).length}
+                        canDelete={canManage || allUploadedBy(rootId, currentUserId)}
+                        archived={archived}
+                      />
+                    </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <Badge variant={versions.length > 1 ? "brand" : "secondary"}>v{latest.version_number}</Badge>
                       <span>{formatBytes(latest.size_bytes)}</span>

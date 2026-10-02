@@ -35,3 +35,5 @@ export const renameAssetSchema = z.object({
   assetId: z.uuid(),
   name: z.string().trim().min(1, "Enter a name").max(255, "Name is too long"),
 });
+
+export const deleteAssetSchema = z.object({ assetId: z.uuid(), scope: z.enum(["version", "all"]) });

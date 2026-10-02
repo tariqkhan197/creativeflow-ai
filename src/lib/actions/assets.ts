@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { dbErrorMessage } from "@/lib/db-errors";
 import { getSupabasePublicConfig } from "@/lib/env/public";
 import {
@@ -12,13 +13,17 @@ import {
   resumableEndpoint,
   thumbnailPathFor,
 } from "@/lib/media/file-types";
+import { planAssetDeletion } from "@/lib/media/deletion";
 import { ASSET_BUCKET, getUploadLimit } from "@/lib/media/server";
-import { isStaff } from "@/lib/permissions";
+import { removeAssetObjects } from "@/lib/media/storage-cleanup";
+import { canManageWork, isStaff } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import {
   assetIdSchema,
   createAssetUploadSchema,
+  deleteAssetSchema,
   finalizeAssetSchema,
+  renameAssetSchema,
   uploadFailureSchema,
 } from "@/lib/validation/assets";
 import { getWorkspaceContext } from "@/lib/workspace";
@@ -238,4 +243,83 @@ export async function cancelAssetUpload(assetId: string): Promise<ActionResult> 
   if (error) return { ok: false, error: dbErrorMessage(error, "Could not cancel the upload.") };
   revalidatePath(`/app/projects/${asset.project_id}`);
   return { ok: true };
+}
+
+/**
+ * Deletes one version, or an original with all of its versions. Files and
+ * thumbnails are removed from Storage (and verified gone) before any database
+ * row is deleted, so a failure never leaves orphaned files and can be retried.
+ */
+export async function deleteAsset(
+  assetId: string,
+  scope: "version" | "all",
+  redirectTo?: string,
+): Promise<ActionResult> {
+  const { user, active } = await getWorkspaceContext();
+  if (!isStaff(active.role)) return { ok: false, error: NO_ACCESS };
+  const parsed = deleteAssetSchema.safeParse({ assetId, scope });
+  if (!parsed.success) return { ok: false, error: "Invalid file." };
+
+  const supabase = await createClient();
+  const { data: target } = await supabase
+    .from("assets")
+    .select("id, root_asset_id, project_id")
+    .eq("id", parsed.data.assetId)
+    .eq("workspace_id", active.id)
+    .maybeSingle();
+  if (!target) return { ok: false, error: "This file no longer exists." };
+  const rootId = target.root_asset_id ?? target.id;
+
+  const { data: rows, error: rowsError } = await supabase
+    .from("assets")
+    .select("id, root_asset_id, storage_path, uploaded_by")
+    .eq("workspace_id", active.id)
+    .or(`id.eq.${rootId},root_asset_id.eq.${rootId}`);
+  if (rowsError) return { ok: false, error: "Could not load the file's versions. Please try again." };
+
+  const plan = planAssetDeletion(rows, target.id, parsed.data.scope, {
+    userId: user.id,
+    canManage: canManageWork(active.role),
+  });
+  if (!plan.ok) return { ok: false, error: plan.error };
+
+  const storageError = await removeAssetObjects(supabase, plan.storagePaths, plan.folders);
+  if (storageError) return { ok: false, error: storageError };
+
+  const { data: deleted, error } = await supabase
+    .from("assets")
+    .delete()
+    .eq("id", plan.rowIdToDelete)
+    .eq("workspace_id", active.id)
+    .select("id");
+  if (error || !deleted.length) {
+    return {
+      ok: false,
+      error: "The files were removed from storage, but the record couldn't be deleted. Please try again.",
+    };
+  }
+
+  revalidatePath(`/app/projects/${target.project_id}`);
+  revalidatePath("/app/reviews");
+  if (redirectTo) redirect(redirectTo.startsWith("/app/") ? redirectTo : `/app/projects/${target.project_id}`);
+  return { ok: true, message: plan.count > 1 ? `Deleted the file and its ${plan.count} versions.` : "File deleted." };
+}
+
+export async function renameAsset(input: { assetId: string; name: string }): Promise<ActionResult> {
+  const { active } = await getWorkspaceContext();
+  if (!isStaff(active.role)) return { ok: false, error: NO_ACCESS };
+  const parsed = renameAssetSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid name." };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("assets")
+    .update({ name: parsed.data.name })
+    .eq("id", parsed.data.assetId)
+    .eq("workspace_id", active.id)
+    .select("project_id");
+  if (error) return { ok: false, error: dbErrorMessage(error, "Could not rename the file.") };
+  if (!data.length) return { ok: false, error: "This file no longer exists." };
+  revalidatePath(`/app/projects/${data[0].project_id}`);
+  return { ok: true, message: "Renamed." };
 }

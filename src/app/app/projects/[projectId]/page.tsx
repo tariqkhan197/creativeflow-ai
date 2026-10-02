@@ -110,7 +110,7 @@ export default async function ProjectPage({ params }: PageProps<"/app/projects/[
               />
               <ConfirmAction
                 title={`Delete ${p.name}?`}
-                description="The project and all of its tasks are deleted permanently. Consider archiving instead."
+                description="The project, its tasks and all of its files (every version and thumbnail) are deleted permanently. Consider archiving instead."
                 confirmLabel="Delete project"
                 action={deleteProject.bind(null, p.id)}
                 trigger={
@@ -182,6 +182,7 @@ export default async function ProjectPage({ params }: PageProps<"/app/projects/[
             currentUserId={user.id}
             archived={Boolean(p.archived_at)}
             people={people}
+            canManage={canManage}
           />
         </Suspense>
       </section>
