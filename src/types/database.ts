@@ -139,7 +139,34 @@ export type Asset = {
   root_asset_id: string | null;
   shared_with_client: boolean;
   uploaded_by: string | null;
+  thumbnail_path: string | null;
+  frame_rate: number | null;
+  upload_error: string | null;
 } & Timestamps;
+
+/** Row of the public.asset_review_summary view (latest ready version per original). */
+export type AssetReviewSummary = {
+  root_asset_id: string;
+  latest_asset_id: string;
+  workspace_id: string;
+  project_id: string;
+  name: string;
+  kind: AssetKind;
+  mime_type: string;
+  latest_version_number: number;
+  thumbnail_path: string | null;
+  duration_seconds: number | null;
+  latest_uploaded_at: string;
+  version_count: number;
+  open_comment_count: number;
+  last_comment_at: string | null;
+};
+
+export type AssetUploadConstraints = {
+  /** Bucket limit in bytes; null when the bucket has no limit of its own. */
+  file_size_limit: number | null;
+  allowed_mime_types: string[] | null;
+};
 
 export type ReviewComment = {
   id: string;
@@ -325,7 +352,9 @@ export type Database = {
       notifications: Table<Notification, "workspace_id" | "user_id" | "type" | "title">;
       activity_log: Table<ActivityLogEntry, "workspace_id" | "entity_type" | "action", "id">;
     };
-    Views: { [_ in never]: never };
+    Views: {
+      asset_review_summary: { Row: AssetReviewSummary; Relationships: [] };
+    };
     Functions: {
       create_workspace: { Args: { p_name: string; p_slug: string }; Returns: string };
       accept_invitation: { Args: { p_token: string }; Returns: string };
@@ -335,6 +364,17 @@ export type Database = {
       };
       workspace_overview: { Args: { p_workspace: string }; Returns: WorkspaceOverview };
       get_invitation: { Args: { p_token: string }; Returns: InvitationInfo | null };
+      finalize_asset_upload: {
+        Args: {
+          p_asset: string;
+          p_duration_seconds?: number | null;
+          p_width?: number | null;
+          p_height?: number | null;
+          p_frame_rate?: number | null;
+        };
+        Returns: { status: "ready"; already?: boolean; thumbnail?: boolean };
+      };
+      asset_upload_constraints: { Args: Record<string, never>; Returns: AssetUploadConstraints | null };
     };
     Enums: {
       workspace_role: WorkspaceRole;

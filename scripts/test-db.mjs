@@ -45,7 +45,8 @@ const SUPABASE_STUBS = `
     bucket_id text references storage.buckets(id),
     name text not null,
     owner uuid,
-    owner_id text
+    owner_id text,
+    metadata jsonb
   );
   alter table storage.objects enable row level security;
   grant all on storage.objects to authenticated;
@@ -95,6 +96,53 @@ async function createUser(email, fullName) {
     { full_name: fullName },
   ]);
   return rows[0].id;
+}
+
+/**
+ * Real upload sequence as the app performs it: create the asset row
+ * (uploading), write the storage object (as the uploader, through RLS), then
+ * finalize via the RPC that checks the stored object.
+ */
+async function uploadAsset(uid, ws, project, opts = {}) {
+  const { randomUUID } = await import("node:crypto");
+  const id = randomUUID();
+  const mime = opts.mime ?? "video/mp4";
+  const size = opts.size ?? 1024;
+  const file = opts.file ?? "cut.mp4";
+  const path = `${ws}/${project}/${id}/${file}`;
+  await as(uid, (tx) =>
+    tx.query(
+      `insert into public.assets (id, workspace_id, project_id, name, kind, storage_path, mime_type, size_bytes, uploaded_by, root_asset_id)
+       values ($1, $2, $3, $4, private.asset_kind_for_mime($5), $6, $5, $7, $8, $9)`,
+      [id, ws, project, opts.name ?? file, mime, path, size, uid, opts.root ?? null],
+    ),
+  );
+  await as(uid, (tx) =>
+    tx.query(
+      `insert into storage.objects (bucket_id, name, owner_id, metadata) values ('project-assets', $1, $2, $3)`,
+      [path, uid, { size: opts.storedSize ?? size, mimetype: mime }],
+    ),
+  );
+  if (opts.thumbnail) {
+    await as(uid, (tx) =>
+      tx.query(
+        `insert into storage.objects (bucket_id, name, owner_id, metadata) values ('project-assets', $1, $2, $3)`,
+        [`${ws}/${project}/${id}/thumbnail.jpg`, uid, { size: 100, mimetype: "image/jpeg" }],
+      ),
+    );
+  }
+  if (opts.finalize !== false) {
+    await as(uid, (tx) =>
+      tx.query(`select public.finalize_asset_upload($1, $2, $3, $4, $5)`, [
+        id,
+        opts.duration ?? null,
+        opts.width ?? null,
+        opts.height ?? null,
+        opts.fps ?? null,
+      ]),
+    );
+  }
+  return { id, path };
 }
 
 async function main() {
@@ -327,18 +375,7 @@ async function main() {
   console.log("\nAssets, review comments & approvals");
   let assetId, approvalId;
   await test("unshared assets are hidden from clients", async () => {
-    assetId = await as(
-      carol,
-      async (tx) =>
-        (
-          await tx.query(
-            `insert into public.assets (id, workspace_id, project_id, name, kind, status, storage_path, mime_type, size_bytes, uploaded_by)
-         values (gen_random_uuid(), $1, $2, 'cut-v1.mp4', 'video', 'ready', $4, 'video/mp4', 1024, $3)
-         returning id`,
-            [wsA, projectId, carol, `${wsA}/${projectId}/a/cut-v1.mp4`],
-          )
-        ).rows[0].id,
-    );
+    ({ id: assetId } = await uploadAsset(carol, wsA, projectId, { file: "cut-v1.mp4", duration: 30 }));
     const rows = await as(dana, async (tx) => (await tx.query(`select id from public.assets`)).rows);
     assert.equal(rows.length, 0);
   });
@@ -493,12 +530,15 @@ async function main() {
   });
 
   console.log("\nStorage");
-  await test("staff can upload into their workspace folder only", async () => {
-    await as(carol, (tx) =>
-      tx.query(`insert into storage.objects (bucket_id, name, owner_id) values ('project-assets', $1, $2)`, [
-        `${wsA}/${projectId}/x/file.mp4`,
-        carol,
-      ]),
+  await test("uploads require a matching in-progress asset (no free-form paths)", async () => {
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(`insert into storage.objects (bucket_id, name, owner_id) values ('project-assets', $1, $2)`, [
+          `${wsA}/${projectId}/x/file.mp4`,
+          carol,
+        ]),
+      ),
+      /row-level security/,
     );
     await rejects(
       as(bob, (tx) =>
@@ -902,6 +942,446 @@ async function main() {
       tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, frank]),
     );
     assert.equal((await activity(wsA, "member.left")).at(-1)?.actor_id, frank);
+  });
+
+  /* ======================================================================== */
+  /* Phase 3: media uploads, versions, review comments                         */
+  /* ======================================================================== */
+  const { randomUUID } = await import("node:crypto");
+  const insertAsset = (uid, fields) =>
+    as(uid, (tx) =>
+      tx.query(
+        `insert into public.assets (id, workspace_id, project_id, name, kind, status, storage_path, mime_type, size_bytes, uploaded_by, root_asset_id)
+         values ($1, $2, $3, 'x', coalesce($4, 'video')::public.asset_kind, coalesce($5, 'uploading')::public.asset_status, $6, $7, $8, $9, $10)`,
+        [
+          fields.id,
+          fields.ws ?? wsA,
+          fields.project ?? project2,
+          fields.kind ?? null,
+          fields.status ?? null,
+          fields.path,
+          fields.mime ?? "video/mp4",
+          fields.size ?? 100,
+          uid,
+          fields.root ?? null,
+        ],
+      ),
+    );
+  const putObject = (uid, name, meta = { size: 100, mimetype: "video/mp4" }) =>
+    as(uid, (tx) =>
+      tx.query(
+        `insert into storage.objects (bucket_id, name, owner_id, metadata) values ('project-assets', $1, $2, $3)`,
+        [name, uid, meta],
+      ),
+    );
+  const finalize = (uid, id, ...meta) =>
+    as(
+      uid,
+      async (tx) =>
+        (
+          await tx.query(`select public.finalize_asset_upload($1, $2, $3, $4, $5) as r`, [
+            id,
+            ...[0, 1, 2, 3].map((i) => meta[i] ?? null),
+          ])
+        ).rows[0].r,
+    );
+  const assetRow = async (id) => (await db.query(`select * from public.assets where id = $1`, [id])).rows[0];
+
+  console.log("\nPhase 3 · Asset records");
+  await test("new assets must start as uploading with a server-shaped path", async () => {
+    const id = randomUUID();
+    await rejects(
+      insertAsset(carol, { id, status: "ready", path: `${wsA}/${project2}/${id}/a.mp4` }),
+      /must start in the uploading state/,
+    );
+    await rejects(insertAsset(carol, { id, path: `${wsA}/${project2}/${randomUUID()}/a.mp4` }), /Invalid storage path/);
+    await rejects(insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/sub/a.mp4` }), /Invalid storage path/);
+    await rejects(insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/thumbnail.jpg` }), /Invalid storage path/);
+    await rejects(insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/../../x.mp4` }), /Invalid storage path/);
+    await rejects(
+      insertAsset(carol, { id, path: `${wsA}/${projectId}/${id}/a.mp4` }),
+      /Invalid storage path|assets_check/,
+    );
+  });
+
+  await test("unsupported MIME types, empty files and over-limit sizes are rejected", async () => {
+    const id = randomUUID();
+    const path = `${wsA}/${project2}/${id}/a.exe`;
+    await rejects(insertAsset(carol, { id, path, mime: "application/x-msdownload" }), /not supported/);
+    await rejects(insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/a.mp4`, size: 0 }), /empty/);
+    await rejects(insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/a.mp4`, size: 6e9 }), /upload limit/);
+  });
+
+  await test("kind is derived from the MIME type, not the client", async () => {
+    const id = randomUUID();
+    await insertAsset(carol, { id, kind: "image", path: `${wsA}/${project2}/${id}/a.mp4` });
+    assert.equal((await assetRow(id)).kind, "video");
+  });
+
+  await test("other agencies and clients cannot create assets in this workspace", async () => {
+    const id = randomUUID();
+    await rejects(insertAsset(bob, { id, path: `${wsA}/${project2}/${id}/a.mp4` }), /row-level security/);
+    await rejects(insertAsset(dana, { id, path: `${wsA}/${project2}/${id}/a.mp4` }), /row-level security/);
+  });
+
+  console.log("\nPhase 3 · Storage uploads");
+  let upId, upPath;
+  await test("only the uploader can write the in-progress file and its thumbnail", async () => {
+    upId = randomUUID();
+    upPath = `${wsA}/${project2}/${upId}/brief.mp4`;
+    await insertAsset(carol, { id: upId, path: upPath, size: 5000 });
+    await rejects(putObject(erin, upPath), /row-level security/);
+    await rejects(putObject(bob, upPath), /row-level security/);
+    await rejects(putObject(carol, `${wsA}/${project2}/${upId}/other.mp4`), /row-level security/);
+    await putObject(carol, upPath, { size: 5000, mimetype: "video/mp4" });
+    await putObject(carol, `${wsA}/${project2}/${upId}/thumbnail.jpg`, { size: 10, mimetype: "image/jpeg" });
+  });
+
+  await test("finalize verifies the stored object; only the uploader (or a manager) may finalize", async () => {
+    const missing = randomUUID();
+    await insertAsset(carol, { id: missing, path: `${wsA}/${project2}/${missing}/m.mp4` });
+    await rejects(finalize(carol, missing), /not found in storage/);
+
+    const wrongSize = randomUUID();
+    await insertAsset(carol, { id: wrongSize, path: `${wsA}/${project2}/${wrongSize}/w.mp4`, size: 999 });
+    await putObject(carol, `${wsA}/${project2}/${wrongSize}/w.mp4`, { size: 998, mimetype: "video/mp4" });
+    await rejects(finalize(carol, wrongSize), /does not match the expected size/);
+
+    const wrongType = randomUUID();
+    await insertAsset(carol, { id: wrongType, path: `${wsA}/${project2}/${wrongType}/t.mp4` });
+    await putObject(carol, `${wsA}/${project2}/${wrongType}/t.mp4`, { size: 100, mimetype: "video/webm" });
+    await rejects(finalize(carol, wrongType), /type does not match/);
+
+    await rejects(finalize(erin, upId), /Asset not found/);
+    await rejects(finalize(bob, upId), /Asset not found/);
+    const r = await finalize(carol, upId, 42.5, 1920, 1080, 25);
+    assert.equal(r.status, "ready");
+    const row = await assetRow(upId);
+    assert.deepEqual(
+      [row.status, Number(row.duration_seconds), row.width, row.height, Number(row.frame_rate), row.thumbnail_path],
+      ["ready", 42.5, 1920, 1080, 25, `${wsA}/${project2}/${upId}/thumbnail.jpg`],
+    );
+    assert.equal((await finalize(carol, upId)).already, true);
+  });
+
+  await test("finalize ignores metadata that does not apply to the file kind", async () => {
+    const { id } = await uploadAsset(carol, wsA, project2, {
+      file: "spec.pdf",
+      mime: "application/pdf",
+      duration: 9,
+      width: 10,
+      height: 10,
+      fps: 30,
+    });
+    const row = await assetRow(id);
+    assert.deepEqual([row.duration_seconds, row.width, row.height, row.frame_rate], [null, null, null, null]);
+  });
+
+  await test("completed files cannot be overwritten", async () => {
+    await rejects(putObject(carol, upPath), /row-level security/);
+    const res = await as(carol, (tx) =>
+      tx.query(`update storage.objects set metadata = '{"size": 1}' where name = $1`, [upPath]),
+    );
+    assert.equal(res.affectedRows, 0);
+  });
+
+  await test("other agencies cannot read or delete the files", async () => {
+    const seen = await as(
+      bob,
+      async (tx) => (await tx.query(`select name from storage.objects where name like $1`, [`${wsA}/%`])).rows,
+    );
+    const del = await as(bob, (tx) => tx.query(`delete from storage.objects where name = $1`, [upPath]));
+    assert.equal(seen.length + del.affectedRows, 0);
+  });
+
+  console.log("\nPhase 3 · Asset lifecycle");
+  await test("status transitions are enforced and failed uploads can be retried on the same record", async () => {
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.assets set status = 'uploading' where id = $1`, [upId])),
+      /Invalid asset status change/,
+    );
+    const id = randomUUID();
+    await insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/r.mp4` });
+    await as(carol, (tx) =>
+      tx.query(`update public.assets set status = 'failed', upload_error = 'network' where id = $1`, [id]),
+    );
+    await as(carol, (tx) => tx.query(`update public.assets set status = 'uploading' where id = $1`, [id]));
+    assert.equal((await assetRow(id)).status, "uploading");
+  });
+
+  await test("file, type, project and metadata are immutable once uploaded", async () => {
+    for (const set of [
+      `storage_path = storage_path || 'x'`,
+      `mime_type = 'video/webm'`,
+      `size_bytes = 1`,
+      `version_number = 9`,
+      `project_id = '${projectId}'`,
+    ]) {
+      await rejects(
+        as(carol, (tx) => tx.query(`update public.assets set ${set} where id = $1`, [upId])),
+        /cannot be changed|violates/,
+      );
+    }
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.assets set duration_seconds = 1 where id = $1`, [upId])),
+      /metadata cannot be changed/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.assets set thumbnail_path = 'x/y' where id = $1`, [upId])),
+      /Invalid thumbnail path/,
+    );
+    await as(carol, (tx) => tx.query(`update public.assets set name = 'Brief v1' where id = $1`, [upId]));
+  });
+
+  await test("clients can read the thumbnail only once the asset is shared", async () => {
+    const thumb = `${wsA}/${projectId}/${assetId}/thumbnail.jpg`;
+    // The Phase 1 asset in the client-visible project had no thumbnail; there is nothing to read.
+    const before = await as(
+      dana,
+      async (tx) => (await tx.query(`select name from storage.objects where name = $1`, [thumb])).rows,
+    );
+    assert.equal(before.length, 0);
+    const shared = await uploadAsset(carol, wsA, projectId, { file: "share.mp4", thumbnail: true });
+    const tName = `${wsA}/${projectId}/${shared.id}/thumbnail.jpg`;
+    const hidden = await as(
+      dana,
+      async (tx) =>
+        (await tx.query(`select name from storage.objects where name = any($1)`, [[tName, shared.path]])).rows,
+    );
+    assert.equal(hidden.length, 0);
+    await as(carol, (tx) => tx.query(`update public.assets set shared_with_client = true where id = $1`, [shared.id]));
+    const visible = await as(
+      dana,
+      async (tx) =>
+        (await tx.query(`select name from storage.objects where name = any($1) order by name`, [[tName, shared.path]]))
+          .rows,
+    );
+    assert.equal(visible.length, 2);
+  });
+
+  console.log("\nPhase 3 · Versions");
+  let v2, v3;
+  await test("versions are numbered sequentially per original", async () => {
+    v2 = (await uploadAsset(carol, wsA, project2, { file: "brief-v2.mp4", root: upId })).id;
+    v3 = (await uploadAsset(erin, wsA, project2, { file: "brief-v3.mp4", root: upId })).id;
+    assert.deepEqual([(await assetRow(v2)).version_number, (await assetRow(v3)).version_number], [2, 3]);
+  });
+
+  await test("a version must target an original in the same project, of the same kind", async () => {
+    const id = randomUUID();
+    await rejects(
+      insertAsset(carol, { id, root: v2, path: `${wsA}/${project2}/${id}/a.mp4` }),
+      /added to the original/,
+    );
+    await rejects(insertAsset(carol, { id, root: assetId, path: `${wsA}/${project2}/${id}/a.mp4` }), /same project/);
+    await rejects(
+      insertAsset(carol, { id, root: upId, mime: "image/png", path: `${wsA}/${project2}/${id}/a.png` }),
+      /same kind/,
+    );
+    await rejects(
+      insertAsset(carol, { id, root: randomUUID(), path: `${wsA}/${project2}/${id}/a.mp4` }),
+      /added to the original/,
+    );
+  });
+
+  await test("version numbers stay unique even if a number is supplied by the caller", async () => {
+    const id = randomUUID();
+    await as(carol, (tx) =>
+      tx.query(
+        `insert into public.assets (id, workspace_id, project_id, name, kind, storage_path, mime_type, size_bytes, uploaded_by, root_asset_id, version_number)
+         values ($1, $2, $3, 'x', 'video', $4, 'video/mp4', 10, $5, $6, 2)`,
+        [id, wsA, project2, `${wsA}/${project2}/${id}/a.mp4`, carol, upId],
+      ),
+    );
+    assert.equal((await assetRow(id)).version_number, 4);
+    await as(carol, (tx) => tx.query(`delete from public.assets where id = $1`, [id]));
+  });
+
+  console.log("\nPhase 3 · Review comments");
+  let c1;
+  const addComment = (uid, fields) =>
+    as(
+      uid,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.review_comments (workspace_id, asset_id, author_id, body, timestamp_seconds, annotation, parent_id, is_internal)
+         values ($1, $2, $3, $4, $5, $6, $7, coalesce($8, false)) returning *`,
+            [
+              wsA,
+              fields.asset ?? upId,
+              uid,
+              fields.body ?? "Note",
+              fields.t ?? null,
+              fields.pin ?? null,
+              fields.parent ?? null,
+              fields.internal ?? null,
+            ],
+          )
+        ).rows[0],
+    );
+
+  await test("comments need an uploaded file", async () => {
+    const id = randomUUID();
+    await insertAsset(carol, { id, path: `${wsA}/${project2}/${id}/p.mp4` });
+    await rejects(addComment(carol, { asset: id }), /uploaded file/);
+  });
+
+  await test("timestamps and pins are validated against the media", async () => {
+    c1 = await addComment(carol, { t: 12.25, pin: { x: 0.5, y: 0.25 }, body: "Logo too small" });
+    assert.deepEqual([Number(c1.timestamp_seconds), c1.annotation], [12.25, { x: 0.5, y: 0.25 }]);
+    await rejects(addComment(carol, { t: 60 }), /past the end/);
+    await rejects(addComment(carol, { pin: { x: 1.5, y: 0 } }), /annotation_valid/);
+    await rejects(addComment(carol, { pin: { x: 0.1, y: 0.1, z: 1 } }), /annotation_valid/);
+    await rejects(addComment(carol, { pin: { x: "0.1", y: 0.1 } }), /annotation_valid/);
+    const pdf = await uploadAsset(carol, wsA, project2, { file: "deck.pdf", mime: "application/pdf" });
+    await rejects(addComment(carol, { asset: pdf.id, t: 1 }), /only available on video and audio/);
+    await rejects(addComment(carol, { asset: pdf.id, pin: { x: 0.1, y: 0.1 } }), /only available on video and images/);
+    await rejects(addComment(carol, { body: "x".repeat(5001) }), /review_comments_body_check/);
+  });
+
+  await test("replies stay on the same file, one level deep, inheriting visibility", async () => {
+    const reply = await addComment(erin, { parent: c1.id, t: 3, pin: { x: 0.1, y: 0.1 }, body: "Agreed" });
+    assert.deepEqual([reply.timestamp_seconds, reply.annotation], [null, null]);
+    await rejects(addComment(erin, { parent: reply.id }), /one level deep/);
+    await rejects(addComment(erin, { parent: c1.id, asset: v2 }), /same file/);
+    const internal = await addComment(carol, { internal: true, body: "Internal thread" });
+    const r2 = await addComment(erin, { parent: internal.id, internal: false, body: "reply" });
+    assert.equal(r2.is_internal, true);
+  });
+
+  await test("only the author can edit comment text; position and visibility are fixed", async () => {
+    await rejects(
+      as(erin, (tx) => tx.query(`update public.review_comments set body = 'hijack' where id = $1`, [c1.id])),
+      /Only the author/,
+    );
+    await as(carol, (tx) =>
+      tx.query(`update public.review_comments set body = 'Logo too small (edited)' where id = $1`, [c1.id]),
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.review_comments set is_internal = true where id = $1`, [c1.id])),
+      /Only the comment text/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.review_comments set timestamp_seconds = 1 where id = $1`, [c1.id])),
+      /Only the comment text/,
+    );
+    const other = await as(bob, (tx) =>
+      tx.query(`update public.review_comments set body = 'x' where id = $1`, [c1.id]),
+    );
+    assert.equal(other.affectedRows, 0);
+  });
+
+  await test("staff resolve top-level comments; the resolver is recorded by the database", async () => {
+    const row = await as(
+      erin,
+      async (tx) =>
+        (
+          await tx.query(
+            `update public.review_comments set resolved_at = now(), resolved_by = $2 where id = $1 returning resolved_by`,
+            [c1.id, alice],
+          )
+        ).rows[0],
+    );
+    assert.equal(row.resolved_by, erin);
+    const reply = (await db.query(`select id from public.review_comments where parent_id = $1 limit 1`, [c1.id]))
+      .rows[0];
+    await rejects(
+      as(erin, (tx) => tx.query(`update public.review_comments set resolved_at = now() where id = $1`, [reply.id])),
+      /Replies cannot be resolved/,
+    );
+    const reopened = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(`update public.review_comments set resolved_at = null where id = $1 returning resolved_by`, [
+            c1.id,
+          ])
+        ).rows[0],
+    );
+    assert.equal(reopened.resolved_by, null);
+  });
+
+  await test("clients cannot resolve and never see internal replies", async () => {
+    const shared = await uploadAsset(carol, wsA, projectId, { file: "client-cut.mp4", duration: 20 });
+    await as(carol, (tx) => tx.query(`update public.assets set shared_with_client = true where id = $1`, [shared.id]));
+    const pub = await addComment(carol, { asset: shared.id, t: 2, body: "Public note" });
+    await addComment(carol, { asset: shared.id, parent: pub.id, internal: true, body: "Internal reply" });
+    const clientComment = await addComment(dana, { asset: shared.id, t: 5, body: "Client note" });
+    const seen = await as(
+      dana,
+      async (tx) =>
+        (await tx.query(`select body from public.review_comments where asset_id = $1 order by created_at`, [shared.id]))
+          .rows,
+    );
+    assert.deepEqual(seen.map((r) => r.body).sort(), ["Client note", "Public note"]);
+    await rejects(
+      as(dana, (tx) =>
+        tx.query(`update public.review_comments set resolved_at = now() where id = $1`, [clientComment.id]),
+      ),
+      /Only the team can resolve/,
+    );
+  });
+
+  console.log("\nPhase 3 · Activity & summary");
+  await test("uploads, versions, comments and resolutions are logged", async () => {
+    const acts = (
+      await db.query(`select action, entity_id, metadata from public.activity_log where workspace_id = $1`, [wsA])
+    ).rows;
+    const has = (action, pred = () => true) => acts.some((a) => a.action === action && pred(a));
+    assert.ok(has("asset.uploaded", (a) => a.entity_id === upId && a.metadata.project_id === project2));
+    assert.ok(has("asset.version_added", (a) => a.entity_id === upId && a.metadata.version === 3));
+    assert.ok(has("comment.created", (a) => a.metadata.root_asset_id === upId));
+    assert.ok(has("comment.resolved"));
+  });
+
+  await test("review summary shows the latest version and open comments, scoped by RLS", async () => {
+    const mine = await as(
+      carol,
+      async (tx) =>
+        (await tx.query(`select * from public.asset_review_summary where root_asset_id = $1`, [upId])).rows[0],
+    );
+    assert.deepEqual([mine.latest_asset_id, mine.latest_version_number, mine.version_count], [v3, 3, 3]);
+    await addComment(carol, { asset: v3, t: 1, body: "On v3" });
+    const after = await as(
+      carol,
+      async (tx) =>
+        (await tx.query(`select open_comment_count from public.asset_review_summary where root_asset_id = $1`, [upId]))
+          .rows[0],
+    );
+    assert.equal(after.open_comment_count, 1);
+    const outsider = await as(
+      bob,
+      async (tx) => (await tx.query(`select * from public.asset_review_summary where workspace_id = $1`, [wsA])).rows,
+    );
+    assert.equal(outsider.length, 0);
+    const client = await as(dana, async (tx) => (await tx.query(`select name from public.asset_review_summary`)).rows);
+    assert.ok(client.length > 0 && client.every((r) => ["share.mp4", "client-cut.mp4", "cut-v1.mp4"].includes(r.name)));
+    const anonRows = await as(null, (tx) => tx.query(`select * from public.asset_review_summary`)).catch((e) => e);
+    assert.match(String(anonRows.message ?? anonRows), /permission denied/);
+  });
+
+  await test("upload constraints expose the bucket limit and allowed types", async () => {
+    const c = await as(erin, async (tx) => (await tx.query(`select public.asset_upload_constraints() as c`)).rows[0].c);
+    assert.equal(Number(c.file_size_limit), 5368709120);
+    assert.ok(c.allowed_mime_types.includes("video/mp4") && !c.allowed_mime_types.includes("application/zip"));
+  });
+
+  await test("deleting an original removes its versions and logs a single deletion", async () => {
+    const before = (await db.query(`select count(*)::int n from public.activity_log where action = 'asset.deleted'`))
+      .rows[0].n;
+    await as(carol, (tx) => tx.query(`delete from public.assets where id = $1`, [upId]));
+    const left = (await db.query(`select count(*)::int n from public.assets where id = any($1)`, [[upId, v2, v3]]))
+      .rows[0].n;
+    const after = (await db.query(`select count(*)::int n from public.activity_log where action = 'asset.deleted'`))
+      .rows[0].n;
+    assert.deepEqual([left, after - before], [0, 1]);
+  });
+
+  await test("members cannot delete other people's assets", async () => {
+    const { id } = await uploadAsset(carol, wsA, project2, { file: "keep.mp4" });
+    const res = await as(erin, (tx) => tx.query(`delete from public.assets where id = $1`, [id]));
+    assert.equal(res.affectedRows, 0);
   });
 
   console.log("\nPhase 2 · Cleanup");
