@@ -10,6 +10,7 @@ import { dbErrorMessage } from "@/lib/db-errors";
 import { publicEnv } from "@/lib/env/public";
 import { canInvite, canLeave, canManageMember, grantableRoles } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { clearExpiredInvitation, isWorkspaceMemberEmail } from "@/lib/team/members";
 import {
   changeRoleSchema,
   invitationIdSchema,
@@ -39,37 +40,14 @@ export async function createInvitation(_prev: FormState, formData: FormData): Pr
 
   const supabase = await createClient();
 
-  // Already a member? (Co-member profiles are readable under RLS.)
-  const { data: members, error: membersError } = await supabase
-    .from("workspace_members")
-    .select("user_id")
-    .eq("workspace_id", active.id);
-  if (membersError) return { status: "error", message: "Could not check existing members. Please try again.", values };
-  if (members.length) {
-    const { data: existing } = await supabase
-      .from("profiles")
-      .select("id")
-      .in(
-        "id",
-        members.map((m) => m.user_id),
-      )
-      .ilike(
-        "email",
-        email.replace(/[\\%_]/g, (c) => `\\${c}`),
-      );
-    if (existing?.length) {
-      return { status: "error", fieldErrors: { email: ["This person is already a member"] }, values };
-    }
+  const alreadyMember = await isWorkspaceMemberEmail(supabase, active.id, email);
+  if (alreadyMember === null) {
+    return { status: "error", message: "Could not check existing members. Please try again.", values };
   }
-
-  // Clear an expired invite for the same address so a fresh one can be sent.
-  await supabase
-    .from("workspace_invitations")
-    .delete()
-    .eq("workspace_id", active.id)
-    .eq("email", email)
-    .is("accepted_at", null)
-    .lt("expires_at", new Date().toISOString());
+  if (alreadyMember) {
+    return { status: "error", fieldErrors: { email: ["This person is already a member"] }, values };
+  }
+  await clearExpiredInvitation(supabase, active.id, email);
 
   const token = randomBytes(32).toString("base64url");
   const { error } = await supabase.from("workspace_invitations").insert({

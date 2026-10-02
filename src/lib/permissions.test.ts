@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { canInvite, canLeave, canManageMember, canManageWork, grantableRoles, isStaff } from "./permissions";
+import {
+  canInvite,
+  canLeave,
+  canManageMember,
+  canManagePortalAccess,
+  canManageWork,
+  grantableRoles,
+  isStaff,
+} from "./permissions";
 
 const owner = { userId: "o", role: "owner" as const };
 const admin = { userId: "a", role: "admin" as const };
@@ -43,5 +51,15 @@ describe("canManageMember", () => {
   it("managers and members manage nobody", () => {
     expect(canManageMember(manager, member)).toBe(false);
     expect(canManageMember(member, manager)).toBe(false);
+  });
+});
+
+describe("canManagePortalAccess", () => {
+  it("allows owners, admins and managers only", () => {
+    expect(canManagePortalAccess("owner")).toBe(true);
+    expect(canManagePortalAccess("admin")).toBe(true);
+    expect(canManagePortalAccess("manager")).toBe(true);
+    expect(canManagePortalAccess("member")).toBe(false);
+    expect(canManagePortalAccess("client")).toBe(false);
   });
 });

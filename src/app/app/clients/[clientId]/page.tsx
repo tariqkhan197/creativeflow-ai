@@ -6,6 +6,7 @@ import { ArrowLeftIcon, FolderKanbanIcon, MailIcon, PhoneIcon, Trash2Icon } from
 import { ConfirmAction } from "@/components/app/confirm-action";
 import { EmptyState } from "@/components/app/empty-state";
 import { ClientFormDialog } from "@/components/clients/client-form-dialog";
+import { PortalAccessCard } from "@/components/clients/portal-access-card";
 import { ProjectStatusBadge } from "@/components/projects/project-badges";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,7 +57,7 @@ export default async function ClientPage({ params }: PageProps<"/app/clients/[cl
             <ClientFormDialog client={client} />
             <ConfirmAction
               title={`Delete ${client.name}?`}
-              description="The client record is deleted permanently. Its projects are kept, without a client."
+              description="The client record is deleted permanently, and its contacts lose portal access. Its projects are kept, without a client."
               confirmLabel="Delete client"
               action={deleteClientRecord.bind(null, client.id, true)}
               trigger={
@@ -135,6 +136,8 @@ export default async function ClientPage({ params }: PageProps<"/app/clients/[cl
           </CardContent>
         </Card>
       </div>
+
+      <PortalAccessCard workspaceId={active.id} clientId={client.id} clientName={client.name} role={active.role} />
     </div>
   );
 }

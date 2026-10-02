@@ -38,6 +38,7 @@ export default async function TeamPage() {
           .from("workspace_invitations")
           .select("id, email, role, expires_at, created_at")
           .eq("workspace_id", active.id)
+          .neq("role", "client") // client portal invitations are managed on each client's page
           .is("accepted_at", null)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),

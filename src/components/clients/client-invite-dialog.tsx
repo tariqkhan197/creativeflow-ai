@@ -4,8 +4,8 @@ import { useActionState, useState } from "react";
 import { UserPlusIcon } from "lucide-react";
 import { FormField } from "@/components/forms/form-field";
 import { FormMessage } from "@/components/forms/form-message";
-import { SelectField } from "@/components/forms/select-field";
 import { SubmitButton } from "@/components/forms/submit-button";
+import { InviteLinkResult } from "@/components/team/invite-link-result";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,18 +16,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { InviteLinkResult } from "@/components/team/invite-link-result";
-import { createInvitation } from "@/lib/actions/team";
+import { createClientInvitation } from "@/lib/actions/portal-access";
 import { initialFormState } from "@/lib/actions/types";
-import type { StaffInviteRole } from "@/lib/validation/team";
 
-const ROLE_HELP: Record<StaffInviteRole, string> = {
-  admin: "Admin: manages settings, team, clients, projects and finance",
-  manager: "Manager: manages clients, projects and invoices",
-  member: "Member: works on projects and tasks",
-};
-
-export function InviteMemberDialog({ roles }: { roles: StaffInviteRole[] }) {
+export function ClientInviteDialog({ clientId, clientName }: { clientId: string; clientName: string }) {
   const [open, setOpen] = useState(false);
   // Remount the form on every open so a previous result never lingers.
   const [formKey, setFormKey] = useState(0);
@@ -40,14 +32,15 @@ export function InviteMemberDialog({ roles }: { roles: StaffInviteRole[] }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="brand">
-          <UserPlusIcon /> Invite people
+        <Button variant="outline" size="sm">
+          <UserPlusIcon /> Invite to portal
         </Button>
       </DialogTrigger>
       <DialogContent>
-        <InviteForm
+        <ClientInviteForm
           key={formKey}
-          roles={roles}
+          clientId={clientId}
+          clientName={clientName}
           onDone={() => setOpen(false)}
           onAnother={() => setFormKey((k) => k + 1)}
         />
@@ -56,18 +49,19 @@ export function InviteMemberDialog({ roles }: { roles: StaffInviteRole[] }) {
   );
 }
 
-function InviteForm({
-  roles,
+function ClientInviteForm({
+  clientId,
+  clientName,
   onDone,
   onAnother,
 }: {
-  roles: StaffInviteRole[];
+  clientId: string;
+  clientName: string;
   onDone: () => void;
   onAnother: () => void;
 }) {
-  const [state, action] = useActionState(createInvitation, initialFormState);
+  const [state, action] = useActionState(createClientInvitation, initialFormState);
   const inviteUrl = state.status === "success" ? state.data?.inviteUrl : undefined;
-
   if (inviteUrl) {
     return <InviteLinkResult inviteUrl={inviteUrl} email={state.data?.email} onAnother={onAnother} onDone={onDone} />;
   }
@@ -75,33 +69,24 @@ function InviteForm({
   return (
     <form action={action} className="grid gap-5" noValidate>
       <DialogHeader>
-        <DialogTitle>Invite people</DialogTitle>
-        <DialogDescription>They&apos;ll get access to this workspace once they accept.</DialogDescription>
+        <DialogTitle>Invite to the client portal</DialogTitle>
+        <DialogDescription>
+          They&apos;ll see only {clientName}&apos;s projects that you show in the portal, the files you share, and
+          non-internal comments. They can comment and approve or request changes.
+        </DialogDescription>
       </DialogHeader>
       <FormMessage state={state} />
+      <input type="hidden" name="clientId" value={clientId} />
       <FormField
         label="Email"
         name="email"
         type="email"
         autoComplete="off"
-        placeholder="colleague@agency.com"
+        placeholder="contact@client.com"
         required
         defaultValue={state.values?.email}
         errors={state.fieldErrors?.email}
       />
-      <SelectField
-        label="Role"
-        name="role"
-        defaultValue={state.values?.role ?? "member"}
-        errors={state.fieldErrors?.role}
-        hint="You can change roles later."
-      >
-        {roles.map((r) => (
-          <option key={r} value={r}>
-            {ROLE_HELP[r]}
-          </option>
-        ))}
-      </SelectField>
       <DialogFooter>
         <SubmitButton pendingLabel="Creating link…">Create invite link</SubmitButton>
       </DialogFooter>

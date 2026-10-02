@@ -14,6 +14,8 @@ const ADMINS: WorkspaceRole[] = ["owner", "admin"];
 export const isStaff = (role: WorkspaceRole) => STAFF.includes(role);
 export const canManageWork = (role: WorkspaceRole) => MANAGERS.includes(role); // clients, projects (create/delete)
 export const canInvite = (role: WorkspaceRole) => ADMINS.includes(role);
+/** Client portal access (client-role invitations and members) — managers and above. */
+export const canManagePortalAccess = (role: WorkspaceRole) => MANAGERS.includes(role);
 
 /** Roles an actor may grant via invitation or role change. */
 export function grantableRoles(actor: WorkspaceRole): StaffInviteRole[] {
