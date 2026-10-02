@@ -123,6 +123,11 @@ export async function ProjectApprovals({
               Approvals can be requested once the project is visible in the portal.
             </p>
           ) : null}
+          <p className="border-t pt-3 text-xs text-muted-foreground">
+            Status updates automatically: requesting approval moves the project to In review, a change request to
+            Revisions, and approval to Approved once nothing else is pending and every round is completed. Delivered and
+            cancelled projects are never moved, and an on-hold project is never marked Approved.
+          </p>
         </CardContent>
       </Card>
 

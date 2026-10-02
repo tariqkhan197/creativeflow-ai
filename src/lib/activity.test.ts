@@ -36,6 +36,40 @@ describe("describeActivity", () => {
   });
 });
 
+describe("Phase 4 activity", () => {
+  it("describes approval and revision events", () => {
+    expect(describeActivity(e("approval.requested", { title: "Cut v2" }, "approval"), nameOf)).toBe(
+      "requested approval of “Cut v2”",
+    );
+    expect(describeActivity(e("approval.approved", { title: "Cut v2" }, "approval"), nameOf)).toBe("approved “Cut v2”");
+    expect(describeActivity(e("approval.approved", {}, "approval"), nameOf)).toBe("approved a deliverable");
+    expect(describeActivity(e("approval.changes_requested", { title: "Cut v2" }, "approval"), nameOf)).toBe(
+      "requested changes on “Cut v2”",
+    );
+    expect(describeActivity(e("approval.cancelled", { title: "Cut v2" }, "approval"), nameOf)).toBe(
+      "cancelled the approval request “Cut v2”",
+    );
+    expect(describeActivity(e("revision.opened", { round: 2 }, "revision"), nameOf)).toBe("opened revision round 2");
+    expect(describeActivity(e("revision.in_progress", { round: 2 }, "revision"), nameOf)).toBe(
+      "started revision round 2",
+    );
+    expect(describeActivity(e("revision.completed", { round: 2 }, "revision"), nameOf)).toBe(
+      "completed revision round 2",
+    );
+    expect(describeActivity(e("revision.open", { round: 2 }, "revision"), nameOf)).toBe("reopened revision round 2");
+  });
+  it("links approvals to the version and revisions to the project", () => {
+    expect(activityHref(e("approval.requested", { project_id: "p1", asset_id: "a1" }, "approval", "ap1"))).toBe(
+      "/app/projects/p1/assets/a1",
+    );
+    expect(activityHref(e("approval.cancelled", { project_id: "p1" }, "approval", "ap1"))).toBe("/app/projects/p1");
+    expect(activityHref(e("approval.approved", {}, "approval", "ap1"))).toBeNull();
+    expect(activityHref(e("revision.opened", { project_id: "p1", round: 1 }, "revision", "r1"))).toBe(
+      "/app/projects/p1",
+    );
+  });
+});
+
 describe("activityHref", () => {
   it("links to existing entities only", () => {
     expect(activityHref(e("project.created"))).toBe("/app/projects/p1");

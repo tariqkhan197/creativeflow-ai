@@ -70,10 +70,22 @@ function sentence(entry: ActivityEntry, nameOf: (userId: string | null) => strin
       return m.internal ? "added an internal note" : m.reply ? "replied to a comment" : "commented on a file";
     case "comment.resolved":
       return "resolved a comment";
+    case "approval.requested":
+      return `requested approval of ${quoted(m.title)}`;
     case "approval.approved":
-      return "approved a deliverable";
+      return str(m.title) ? `approved ${quoted(m.title)}` : "approved a deliverable";
     case "approval.changes_requested":
-      return "requested changes";
+      return str(m.title) ? `requested changes on ${quoted(m.title)}` : "requested changes";
+    case "approval.cancelled":
+      return `cancelled the approval request ${quoted(m.title)}`;
+    case "revision.opened":
+      return `opened revision round ${String(m.round ?? "")}`;
+    case "revision.in_progress":
+      return `started revision round ${String(m.round ?? "")}`;
+    case "revision.completed":
+      return `completed revision round ${String(m.round ?? "")}`;
+    case "revision.open":
+      return `reopened revision round ${String(m.round ?? "")}`;
     default:
       return entry.action.replace(/[._]/g, " ");
   }
@@ -92,6 +104,17 @@ export function activityHref(entry: ActivityEntry): string | null {
   if (entry.entity_type === "asset") {
     const projectId = meta(entry).project_id;
     return typeof projectId === "string" ? `/app/projects/${projectId}/assets/${entry.entity_id}` : null;
+  }
+  if (entry.entity_type === "approval") {
+    const m = meta(entry);
+    if (typeof m.project_id !== "string") return null;
+    return typeof m.asset_id === "string"
+      ? `/app/projects/${m.project_id}/assets/${m.asset_id}`
+      : `/app/projects/${m.project_id}`;
+  }
+  if (entry.entity_type === "revision") {
+    const projectId = meta(entry).project_id;
+    return typeof projectId === "string" ? `/app/projects/${projectId}` : null;
   }
   if (entry.entity_type === "comment") {
     const m = meta(entry);
