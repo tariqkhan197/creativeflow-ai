@@ -511,6 +511,399 @@ async function main() {
     );
   });
 
+  /* ======================================================================== */
+  /* Phase 2: team, clients, projects & tasks                                 */
+  /* ======================================================================== */
+
+  const newToken = () => crypto.randomBytes(32).toString("base64url");
+  const hashToken = (t) => crypto.createHash("sha256").update(t).digest("hex");
+  async function inviteAndAccept(inviter, ws, email, role, invitee) {
+    const t = newToken();
+    await as(inviter, (tx) =>
+      tx.query(
+        `insert into public.workspace_invitations (workspace_id, email, role, token_hash, invited_by) values ($1, $2, $3, $4, $5)`,
+        [ws, email, role, hashToken(t), inviter],
+      ),
+    );
+    await as(invitee, (tx) => tx.query(`select public.accept_invitation($1)`, [t]));
+  }
+  const activity = async (ws, action) =>
+    (
+      await db.query(
+        `select actor_id, metadata from public.activity_log where workspace_id = $1 and action = $2 order by id`,
+        [ws, action],
+      )
+    ).rows;
+
+  const erin = await createUser("erin@agency-a.test", "Erin");
+  const frank = await createUser("frank@agency-a.test", "Frank");
+
+  console.log("\nPhase 2 · Invitations");
+  let erinToken;
+  await test("get_invitation shows a pending invite to anyone holding the link", async () => {
+    erinToken = newToken();
+    await as(alice, (tx) =>
+      tx.query(
+        `insert into public.workspace_invitations (workspace_id, email, role, token_hash, invited_by) values ($1, 'erin@agency-a.test', 'member', $2, $3)`,
+        [wsA, hashToken(erinToken), alice],
+      ),
+    );
+    const info = await as(
+      null,
+      async (tx) => (await tx.query(`select public.get_invitation($1) as i`, [erinToken])).rows[0].i,
+    );
+    assert.equal(info.workspace_name, "Agency A");
+    assert.equal(info.role, "member");
+    assert.equal(info.status, "pending");
+    assert.equal(info.inviter_name, "Alice");
+  });
+
+  await test("get_invitation returns nothing for an unknown or malformed token", async () => {
+    const a = await as(
+      null,
+      async (tx) => (await tx.query(`select public.get_invitation($1) as i`, [newToken()])).rows[0].i,
+    );
+    const b = await as(null, async (tx) => (await tx.query(`select public.get_invitation('x') as i`)).rows[0].i);
+    assert.equal(a, null);
+    assert.equal(b, null);
+  });
+
+  await test("accepting marks the invite accepted and logs invitation.created", async () => {
+    await as(erin, (tx) => tx.query(`select public.accept_invitation($1)`, [erinToken]));
+    const info = await as(
+      erin,
+      async (tx) => (await tx.query(`select public.get_invitation($1) as i`, [erinToken])).rows[0].i,
+    );
+    assert.equal(info.status, "accepted");
+    const logs = await activity(wsA, "invitation.created");
+    assert.ok(logs.some((l) => l.metadata.email === "erin@agency-a.test" && l.actor_id === alice));
+  });
+
+  await test("expired invitations report expired and cannot be accepted", async () => {
+    const t = newToken();
+    await as(alice, (tx) =>
+      tx.query(
+        `insert into public.workspace_invitations (workspace_id, email, role, token_hash, invited_by, expires_at)
+         values ($1, 'late@agency-a.test', 'member', $2, $3, now() - interval '1 day')`,
+        [wsA, hashToken(t), alice],
+      ),
+    );
+    const info = await as(null, async (tx) => (await tx.query(`select public.get_invitation($1) as i`, [t])).rows[0].i);
+    assert.equal(info.status, "expired");
+  });
+
+  await test("revoking a pending invitation logs invitation.revoked", async () => {
+    await as(alice, (tx) => tx.query(`delete from public.workspace_invitations where email = 'late@agency-a.test'`));
+    const logs = await activity(wsA, "invitation.revoked");
+    assert.equal(logs.at(-1).metadata.email, "late@agency-a.test");
+  });
+
+  await test("managers cannot invite (admins only)", () =>
+    rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.workspace_invitations (workspace_id, email, role, token_hash, invited_by) values ($1, 'x@y.test', 'member', $2, $3)`,
+          [wsA, hashToken(newToken()), carol],
+        ),
+      ),
+      /row-level security/,
+    ));
+
+  console.log("\nPhase 2 · Roles");
+  await test("owner invites an admin; admins cannot grant admin", async () => {
+    await inviteAndAccept(alice, wsA, "frank@agency-a.test", "admin", frank);
+    await rejects(
+      as(frank, (tx) =>
+        tx.query(`update public.workspace_members set role = 'admin' where workspace_id = $1 and user_id = $2`, [
+          wsA,
+          erin,
+        ]),
+      ),
+      /Only the workspace owner can grant the admin role/,
+    );
+  });
+
+  await test("admins change non-admin roles; the change is logged", async () => {
+    await as(frank, (tx) =>
+      tx.query(`update public.workspace_members set role = 'manager' where workspace_id = $1 and user_id = $2`, [
+        wsA,
+        erin,
+      ]),
+    );
+    const logs = await activity(wsA, "member.role_changed");
+    assert.deepEqual(logs.at(-1).metadata, { from: "member", to: "manager" });
+    assert.equal(logs.at(-1).actor_id, frank);
+  });
+
+  await test("only the owner can demote or remove an admin", async () => {
+    await as(alice, (tx) =>
+      tx.query(`update public.workspace_members set role = 'admin' where workspace_id = $1 and user_id = $2`, [
+        wsA,
+        erin,
+      ]),
+    );
+    await rejects(
+      as(frank, (tx) =>
+        tx.query(`update public.workspace_members set role = 'member' where workspace_id = $1 and user_id = $2`, [
+          wsA,
+          erin,
+        ]),
+      ),
+      /Only the workspace owner can change an admin/,
+    );
+    await rejects(
+      as(frank, (tx) =>
+        tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, erin]),
+      ),
+      /Only the workspace owner can remove an admin/,
+    );
+    await as(alice, (tx) =>
+      tx.query(`update public.workspace_members set role = 'member' where workspace_id = $1 and user_id = $2`, [
+        wsA,
+        erin,
+      ]),
+    );
+  });
+
+  await test("members cannot change roles", async () => {
+    const res = await as(erin, (tx) =>
+      tx.query(`update public.workspace_members set role = 'manager' where workspace_id = $1 and user_id = $2`, [
+        wsA,
+        erin,
+      ]),
+    );
+    assert.equal(res.affectedRows, 0);
+  });
+
+  await test("other agencies cannot see members or activity", async () => {
+    const members = await as(
+      bob,
+      async (tx) => (await tx.query(`select * from public.workspace_members where workspace_id = $1`, [wsA])).rows,
+    );
+    const logs = await as(
+      bob,
+      async (tx) => (await tx.query(`select * from public.activity_log where workspace_id = $1`, [wsA])).rows,
+    );
+    assert.equal(members.length, 0);
+    assert.equal(logs.length, 0);
+  });
+
+  await test("deleting a workspace with an admin still cascades cleanly", async () => {
+    const tmp = await as(
+      alice,
+      async (tx) => (await tx.query(`select public.create_workspace('Temp WS', 'temp-ws') as id`)).rows[0].id,
+    );
+    await inviteAndAccept(alice, tmp, "frank@agency-a.test", "admin", frank);
+    await as(alice, (tx) => tx.query(`delete from public.workspaces where id = $1`, [tmp]));
+    const { rows } = await db.query(`select count(*)::int as n from public.workspace_members where workspace_id = $1`, [
+      tmp,
+    ]);
+    assert.equal(rows[0].n, 0);
+  });
+
+  console.log("\nPhase 2 · Clients");
+  let client2;
+  await test("members cannot create clients; managers can and it is logged", async () => {
+    await rejects(
+      as(erin, (tx) =>
+        tx.query(`insert into public.clients (workspace_id, name, created_by) values ($1, 'Nope', $2)`, [wsA, erin]),
+      ),
+      /row-level security/,
+    );
+    client2 = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.clients (workspace_id, name, email, created_by) values ($1, 'Globex', 'ops@globex.test', $2) returning id`,
+            [wsA, carol],
+          )
+        ).rows[0].id,
+    );
+    const logs = await activity(wsA, "client.created");
+    assert.ok(logs.some((l) => l.metadata.name === "Globex" && l.actor_id === carol));
+  });
+
+  await test("client email format is validated by the database", () =>
+    rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.clients (workspace_id, name, email, created_by) values ($1, 'Bad', 'not-an-email', $2)`,
+          [wsA, carol],
+        ),
+      ),
+      /clients_email_check/,
+    ));
+
+  await test("other agencies cannot read, update or delete clients", async () => {
+    const rows = await as(
+      bob,
+      async (tx) => (await tx.query(`select id from public.clients where id = $1`, [client2])).rows,
+    );
+    const upd = await as(bob, (tx) => tx.query(`update public.clients set name = 'x' where id = $1`, [client2]));
+    const del = await as(bob, (tx) => tx.query(`delete from public.clients where id = $1`, [client2]));
+    assert.equal(rows.length + upd.affectedRows + del.affectedRows, 0);
+  });
+
+  console.log("\nPhase 2 · Projects");
+  let project2;
+  await test("project create, status change and archive are logged", async () => {
+    project2 = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.projects (workspace_id, client_id, name, created_by, budget_cents, due_date) values ($1, $2, 'Spring campaign', $3, 1500000, current_date + 30) returning id`,
+            [wsA, client2, carol],
+          )
+        ).rows[0].id,
+    );
+    await as(erin, (tx) => tx.query(`update public.projects set status = 'in_progress' where id = $1`, [project2]));
+    await as(carol, (tx) => tx.query(`update public.projects set archived_at = now() where id = $1`, [project2]));
+    await as(carol, (tx) => tx.query(`update public.projects set archived_at = null where id = $1`, [project2]));
+    assert.ok((await activity(wsA, "project.created")).some((l) => l.metadata.name === "Spring campaign"));
+    const changed = (await activity(wsA, "project.status_changed")).at(-1);
+    assert.deepEqual([changed.metadata.from, changed.metadata.to, changed.actor_id], ["planning", "in_progress", erin]);
+    assert.equal((await activity(wsA, "project.archived")).length, 1);
+    assert.equal((await activity(wsA, "project.restored")).length, 1);
+  });
+
+  await test("members can update but not create or delete projects", async () => {
+    await rejects(
+      as(erin, (tx) =>
+        tx.query(`insert into public.projects (workspace_id, name, created_by) values ($1, 'Nope', $2)`, [wsA, erin]),
+      ),
+      /row-level security/,
+    );
+    const del = await as(erin, (tx) => tx.query(`delete from public.projects where id = $1`, [project2]));
+    assert.equal(del.affectedRows, 0);
+  });
+
+  await test("due date cannot be before start date", () =>
+    rejects(
+      as(carol, (tx) =>
+        tx.query(`update public.projects set start_date = current_date, due_date = current_date - 1 where id = $1`, [
+          project2,
+        ]),
+      ),
+      /projects_check/,
+    ));
+
+  await test("only staff can be assigned to a project team", async () => {
+    await as(carol, (tx) =>
+      tx.query(`insert into public.project_members (project_id, workspace_id, user_id) values ($1, $2, $3)`, [
+        project2,
+        wsA,
+        erin,
+      ]),
+    );
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(`insert into public.project_members (project_id, workspace_id, user_id) values ($1, $2, $3)`, [
+          project2,
+          wsA,
+          dana,
+        ]),
+      ),
+      /Only team members/,
+    );
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(`insert into public.project_members (project_id, workspace_id, user_id) values ($1, $2, $3)`, [
+          project2,
+          wsA,
+          bob,
+        ]),
+      ),
+      /Only team members|foreign key/,
+    );
+  });
+
+  console.log("\nPhase 2 · Tasks");
+  const addTask = (uid, title, extra = {}) =>
+    as(
+      uid,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.tasks (workspace_id, project_id, title, created_by, assignee_id, status)
+         values ($1, $2, $3, $4, $5, coalesce($6, 'todo')::public.task_status) returning id, position, completed_at`,
+            [wsA, project2, title, uid, extra.assignee ?? null, extra.status ?? null],
+          )
+        ).rows[0],
+    );
+
+  await test("new tasks go to the end of their column", async () => {
+    const t1 = await addTask(erin, "Write brief");
+    const t2 = await addTask(erin, "Book crew");
+    assert.equal(t1.position, 0);
+    assert.equal(t2.position, 1);
+  });
+
+  await test("assignees must be staff of the same workspace", async () => {
+    await addTask(carol, "Edit cut", { assignee: erin });
+    await rejects(addTask(carol, "Client task", { assignee: dana }), /assignee must be a team member/);
+    await rejects(addTask(carol, "Outsider task", { assignee: bob }), /assignee must be a team member/);
+  });
+
+  await test("completing a task sets completed_at and logs it; reopening clears it", async () => {
+    const t = await addTask(erin, "Colour grade");
+    const done = await as(
+      erin,
+      async (tx) =>
+        (
+          await tx.query(`update public.tasks set status = 'done' where id = $1 returning completed_at, position`, [
+            t.id,
+          ])
+        ).rows[0],
+    );
+    assert.ok(done.completed_at);
+    assert.equal(done.position, 0);
+    const reopened = await as(
+      erin,
+      async (tx) =>
+        (await tx.query(`update public.tasks set status = 'todo' where id = $1 returning completed_at`, [t.id]))
+          .rows[0],
+    );
+    assert.equal(reopened.completed_at, null);
+    assert.ok((await activity(wsA, "task.completed")).some((l) => l.metadata.title === "Colour grade"));
+  });
+
+  await test("other agencies cannot read or add tasks to this workspace", async () => {
+    const rows = await as(
+      bob,
+      async (tx) => (await tx.query(`select id from public.tasks where project_id = $1`, [project2])).rows,
+    );
+    assert.equal(rows.length, 0);
+    await rejects(
+      as(bob, (tx) =>
+        tx.query(`insert into public.tasks (workspace_id, project_id, title, created_by) values ($1, $2, 'x', $3)`, [
+          wsA,
+          project2,
+          bob,
+        ]),
+      ),
+      /row-level security/,
+    );
+    await rejects(
+      as(bob, (tx) =>
+        tx.query(`insert into public.tasks (workspace_id, project_id, title, created_by) values ($1, $2, 'x', $3)`, [
+          wsB,
+          project2,
+          bob,
+        ]),
+      ),
+      /foreign key/,
+    );
+  });
+
+  await test("members leave on their own; the departure is logged", async () => {
+    await as(frank, (tx) =>
+      tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, frank]),
+    );
+    assert.equal((await activity(wsA, "member.left")).at(-1)?.actor_id, frank);
+  });
+
   console.log(`\n${passed} passed${process.exitCode ? ", some FAILED" : ""}`);
 }
 
