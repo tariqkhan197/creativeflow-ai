@@ -47,6 +47,7 @@ export async function switchWorkspace(workspaceId: string): Promise<{ ok: boolea
 
   (await cookies()).set(ACTIVE_WORKSPACE_COOKIE, id.data, COOKIE_OPTIONS);
   revalidatePath("/app", "layout");
+  revalidatePath("/portal", "layout");
   return { ok: true };
 }
 
@@ -86,5 +87,6 @@ export async function updateProfile(_prev: FormState, formData: FormData): Promi
   if (error) return { status: "error", message: "Could not save your profile. Please try again.", values };
 
   revalidatePath("/app", "layout");
+  revalidatePath("/portal", "layout");
   return { status: "success", message: "Profile updated." };
 }

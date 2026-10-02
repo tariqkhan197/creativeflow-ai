@@ -1,5 +1,5 @@
 /** Routes that require a signed-in user. */
-export const PROTECTED_PREFIXES = ["/app", "/onboarding"];
+export const PROTECTED_PREFIXES = ["/app", "/portal", "/onboarding"];
 
 /** Auth pages a signed-in user is redirected away from. */
 export const AUTH_ROUTES = ["/login", "/signup", "/forgot-password"];

@@ -14,7 +14,17 @@ import {
 import { signOut } from "@/lib/actions/auth";
 import { initials } from "@/lib/utils";
 
-export function UserMenu({ name, email, avatarUrl }: { name: string | null; email: string; avatarUrl: string | null }) {
+export function UserMenu({
+  name,
+  email,
+  avatarUrl,
+  settingsHref = "/app/settings",
+}: {
+  name: string | null;
+  email: string;
+  avatarUrl: string | null;
+  settingsHref?: string;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -33,7 +43,7 @@ export function UserMenu({ name, email, avatarUrl }: { name: string | null; emai
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/app/settings">
+          <Link href={settingsHref}>
             <SettingsIcon /> Settings
           </Link>
         </DropdownMenuItem>

@@ -21,7 +21,7 @@ import { getIntegrationStatus } from "@/lib/env/server";
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney, formatRelativeTime } from "@/lib/utils";
 import { getWorkspaceContext, MANAGER_ROLES, type WorkspaceWithRole } from "@/lib/workspace";
-import type { ProjectStatus, WorkspaceOverview } from "@/types/database";
+import type { WorkspaceOverview } from "@/types/database";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -50,7 +50,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/app">)
           Your password has been updated.
         </p>
       ) : null}
-      {active.role === "client" ? <ClientHome workspace={active} /> : <StaffHome workspace={active} />}
+      <StaffHome workspace={active} />
     </div>
   );
 }
@@ -249,62 +249,5 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
         </div>
       </div>
     </>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Client-portal home                                                          */
-/* -------------------------------------------------------------------------- */
-
-const STATUS_LABELS: Record<ProjectStatus, string> = {
-  planning: "Planning",
-  in_progress: "In progress",
-  in_review: "Ready for review",
-  revisions: "Revisions",
-  approved: "Approved",
-  delivered: "Delivered",
-  on_hold: "On hold",
-  cancelled: "Cancelled",
-};
-
-async function ClientHome({ workspace }: { workspace: WorkspaceWithRole }) {
-  const supabase = await createClient();
-  // Clients can't read `projects` directly (it holds the budget and internal brief). This
-  // returns the safe fields of the client-visible projects of the client this user is bound to.
-  const { data: projects, error } = await supabase.rpc("portal_projects", { p_workspace: workspace.id });
-
-  if (error) throw new Error(`Could not load projects: ${error.message}`);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Your projects</CardTitle>
-        <CardDescription>Projects {workspace.name} has shared with you.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {projects && projects.length > 0 ? (
-          <ul className="divide-y">
-            {projects.map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
-                <div className="grid gap-0.5">
-                  <p className="font-medium">{p.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Updated {formatRelativeTime(p.updated_at)}
-                    {p.due_date ? ` · Due ${new Date(p.due_date).toLocaleDateString()}` : ""}
-                  </p>
-                </div>
-                <Badge variant={p.status === "in_review" ? "brand" : "secondary"}>{STATUS_LABELS[p.status]}</Badge>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyState
-            icon={FolderKanbanIcon}
-            title="Nothing shared yet"
-            description="When the agency shares a project with you, it will appear here for review and approval."
-          />
-        )}
-      </CardContent>
-    </Card>
   );
 }

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { DesktopSidebar } from "@/components/app/sidebar";
 import { MobileSidebar } from "@/components/app/mobile-sidebar";
 import { NotificationsMenu } from "@/components/app/notifications-menu";
@@ -9,6 +10,8 @@ import { getWorkspaceContext, ROLE_LABELS } from "@/lib/workspace";
 
 export default async function AppLayout({ children }: LayoutProps<"/app">) {
   const { user, profile, workspaces, active } = await getWorkspaceContext();
+  // Client users work in the client portal; /app is the agency workspace.
+  if (active.role === "client") redirect("/portal");
   const supabase = await createClient();
 
   const [{ data: notifications }, { count: unreadCount }] = await Promise.all([

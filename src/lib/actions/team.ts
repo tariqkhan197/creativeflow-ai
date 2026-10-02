@@ -187,7 +187,7 @@ export async function leaveWorkspace(): Promise<ActionResult> {
 /** Accept an invitation as the signed-in user (from /invite/[token]). */
 export async function acceptInvitation(_prev: FormState, formData: FormData): Promise<FormState> {
   const token = formData.get("token");
-  await requireUser(typeof token === "string" ? `/invite/${token}` : "/app");
+  const user = await requireUser(typeof token === "string" ? `/invite/${token}` : "/app");
   const parsed = invitationTokenSchema.safeParse(token);
   if (!parsed.success) return { status: "error", message: "This invitation link is invalid." };
 
@@ -200,6 +200,14 @@ export async function acceptInvitation(_prev: FormState, formData: FormData): Pr
   const store = await cookies();
   store.set(ACTIVE_WORKSPACE_COOKIE, workspaceId, ACTIVE_WORKSPACE_COOKIE_OPTIONS);
   store.delete(PENDING_INVITE_COOKIE);
+  // Client contacts land in the client portal, everyone else in the workspace.
+  const { data: membership } = await supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
+    .maybeSingle();
   revalidatePath("/app", "layout");
-  redirect("/app?joined=1");
+  revalidatePath("/portal", "layout");
+  redirect(membership?.role === "client" ? "/portal?joined=1" : "/app?joined=1");
 }
