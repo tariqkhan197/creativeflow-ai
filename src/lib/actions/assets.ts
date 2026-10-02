@@ -14,7 +14,7 @@ import {
   thumbnailPathFor,
 } from "@/lib/media/file-types";
 import { planAssetDeletion } from "@/lib/media/deletion";
-import { ASSET_BUCKET, getUploadLimit } from "@/lib/media/server";
+import { ASSET_BUCKET, getUploadLimit, SIGNED_URL_TTL_SECONDS } from "@/lib/media/server";
 import { removeAssetObjects } from "@/lib/media/storage-cleanup";
 import { canManageWork, isStaff } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -322,4 +322,40 @@ export async function renameAsset(input: { assetId: string; name: string }): Pro
   if (!data.length) return { ok: false, error: "This file no longer exists." };
   revalidatePath(`/app/projects/${data[0].project_id}`);
   return { ok: true, message: "Renamed." };
+}
+
+export type MediaUrls =
+  { ok: true; url: string; downloadUrl: string; expiresAt: number } | { ok: false; error: string };
+
+/**
+ * Short-lived signed URLs for viewing and downloading one asset, issued only
+ * after the caller's access is re-checked (RLS on assets and storage.objects).
+ */
+export async function getAssetMediaUrls(assetId: string): Promise<MediaUrls> {
+  const { active } = await getWorkspaceContext();
+  const parsed = assetIdSchema.safeParse({ assetId });
+  if (!parsed.success) return { ok: false, error: "Invalid file." };
+  const supabase = await createClient();
+  const { data: asset } = await supabase
+    .from("assets")
+    .select("storage_path, name, status")
+    .eq("id", parsed.data.assetId)
+    .eq("workspace_id", active.id)
+    .maybeSingle();
+  if (!asset || asset.status !== "ready") return { ok: false, error: "This file isn't available." };
+
+  const bucket = supabase.storage.from(ASSET_BUCKET);
+  const [view, download] = await Promise.all([
+    bucket.createSignedUrl(asset.storage_path, SIGNED_URL_TTL_SECONDS),
+    bucket.createSignedUrl(asset.storage_path, SIGNED_URL_TTL_SECONDS, { download: asset.name }),
+  ]);
+  if (view.error || download.error || !view.data || !download.data) {
+    return { ok: false, error: "A secure link to this file couldn't be created. Please try again." };
+  }
+  return {
+    ok: true,
+    url: view.data.signedUrl,
+    downloadUrl: download.data.signedUrl,
+    expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000,
+  };
 }

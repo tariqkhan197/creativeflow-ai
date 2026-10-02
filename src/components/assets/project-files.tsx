@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AlertTriangleIcon, FilesIcon, Loader2Icon, MessageSquareIcon, XIcon } from "lucide-react";
 import { ConfirmAction } from "@/components/app/confirm-action";
 import { EmptyState } from "@/components/app/empty-state";
@@ -141,7 +142,11 @@ export async function ProjectFiles({
                   className="overflow-hidden rounded-xl border bg-card shadow-xs"
                   data-asset-id={latest.id}
                 >
-                  <div className="relative flex aspect-video items-center justify-center bg-muted">
+                  <Link
+                    href={`/app/projects/${projectId}/assets/${latest.id}`}
+                    className="relative flex aspect-video items-center justify-center bg-muted"
+                    aria-label={`Review ${latest.name}`}
+                  >
                     {url ? (
                       // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL, not optimisable
                       <img src={url} alt="" className="size-full object-cover" loading="lazy" />
@@ -153,12 +158,16 @@ export async function ProjectFiles({
                         {formatTimecode(Number(latest.duration_seconds))}
                       </span>
                     ) : null}
-                  </div>
+                  </Link>
                   <div className="grid gap-1.5 p-3">
                     <div className="flex items-center gap-1">
-                      <p className="min-w-0 flex-1 truncate text-sm font-medium" title={latest.name}>
+                      <Link
+                        href={`/app/projects/${projectId}/assets/${latest.id}`}
+                        className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+                        title={latest.name}
+                      >
                         {latest.name}
-                      </p>
+                      </Link>
                       <AssetCardMenu
                         rootId={rootId}
                         name={latest.name}

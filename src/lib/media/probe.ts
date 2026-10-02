@@ -1,4 +1,5 @@
 import type { AssetKind } from "@/types/database";
+import { resolveDuration } from "@/lib/media/duration";
 import { estimateFrameRate } from "@/lib/media/frame-rate";
 
 export type MediaProbe = {
@@ -68,7 +69,7 @@ async function probeVideo(url: string): Promise<MediaProbe> {
   }
   const result: MediaProbe = {
     previewable: true,
-    durationSeconds: finite(video.duration),
+    durationSeconds: finite((await resolveDuration(video)) ?? NaN),
     width: finite(video.videoWidth),
     height: finite(video.videoHeight),
     notes,
@@ -136,7 +137,7 @@ async function probeAudio(url: string): Promise<MediaProbe> {
   audio.src = url;
   try {
     await withTimeout(once(audio, "loadedmetadata"));
-    return { previewable: true, durationSeconds: finite(audio.duration), notes: [] };
+    return { previewable: true, durationSeconds: finite((await resolveDuration(audio)) ?? NaN), notes: [] };
   } catch {
     return {
       previewable: false,
