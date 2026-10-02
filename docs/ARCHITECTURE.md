@@ -69,6 +69,31 @@ Supabase (Postgres, Auth, Storage, Realtime), with Anthropic for AI generation a
   template (recommended, works across browsers) and the PKCE `?code=` flow.
 - Password reset does not reveal whether an account exists. `?next=` redirects are restricted to same-origin paths.
 
+## Team invitations
+
+1. An owner/admin submits the invite form. The Server Action checks the role and that the person isn't already a
+   member. It generates 32 random bytes, stores only their SHA-256 hash in `workspace_invitations`, and returns the
+   link `/invite/<token>` once.
+2. The invitee opens the link. `/invite/[token]` calls `get_invitation(token)`, which works signed out because the
+   token is the credential, and shows the workspace, role and expiry.
+3. Signed out, the invitee chooses sign up or sign in, and `?next=/invite/<token>` is carried through. For a sign-up
+   that needs email confirmation, a short-lived httpOnly cookie lets `/auth/confirm` return to the invite when the
+   link is opened in the same browser.
+4. Signed in with the invited email, the invitee clicks Join. `accept_invitation` re-validates the hash, expiry and
+   email, adds the membership, and marks the invitation used. The app then switches to that workspace.
+
+## Server-side authorization pattern
+
+Every Phase 2 Server Action:
+
+1. resolves the user and the active workspace from the database (`getWorkspaceContext`);
+2. checks the role with `src/lib/permissions.ts`, which mirrors the RLS rules, to give clear errors;
+3. validates input with zod;
+4. filters every query by `workspace_id`;
+5. treats "0 rows affected" as not found / not allowed.
+
+RLS and triggers stay the final authority, and `src/lib/db-errors.ts` maps database errors to safe messages.
+
 ## Request lifecycle (example: dashboard)
 
 1. `proxy.ts` refreshes the session cookie; signed-out → `/login?next=/app`.

@@ -11,7 +11,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -219,6 +219,13 @@ if (admin) {
   else if (error?.code === "PGRST202") fail("RPC create_workspace not found", "npx supabase db push");
   else fail(`Unexpected create_workspace result: ${error ? `${error.code} ${error.message}` : "no error"}`);
 
+  {
+    const { data, error } = await admin.rpc("get_invitation", { p_token: "x".repeat(43) });
+    if (!error && data === null) ok("Phase 2 migration installed (get_invitation)");
+    else if (error?.code === "PGRST202") fail("Phase 2 migration not applied", "npx supabase db push");
+    else fail(`Unexpected get_invitation result: ${error ? `${error.code} ${error.message}` : JSON.stringify(data)}`);
+  }
+
   section("Storage");
   const { data: buckets, error: bucketError } = await admin.storage.listBuckets();
   if (bucketError) fail(`Could not list buckets: ${bucketError.message}`);
@@ -246,7 +253,7 @@ if (E2E) {
     const users = [];
     let workspaceId = null;
     try {
-      for (const who of ["a", "b"]) {
+      for (const who of ["a", "b", "c"]) {
         const { data, error } = await admin.auth.admin.createUser({
           email: `cf-verify-${tag}-${who}@example.com`,
           password,
@@ -256,7 +263,7 @@ if (E2E) {
         if (error) throw new Error(`create test user: ${error.message}`);
         users.push(data.user);
       }
-      ok("Created two throwaway users (pre-confirmed, no emails sent)");
+      ok("Created three throwaway users (pre-confirmed, no emails sent)");
 
       const { data: profile } = await admin.from("profiles").select("full_name").eq("id", users[0].id).maybeSingle();
       if (profile?.full_name === "Verify A") ok("Profile created automatically by the sign-up trigger");
@@ -307,6 +314,130 @@ if (E2E) {
       const { error: bOverview } = await b.rpc("workspace_overview", { p_workspace: wsId });
       if (bOverview) ok("User B is denied User A's dashboard data");
       else fail("User B could read User A's dashboard overview");
+
+      /* ------------------------------ Phase 2 ------------------------------ */
+      const c = await signIn(users[2]);
+      const hash = (t) => createHash("sha256").update(t).digest("hex");
+      const token = randomBytes(32).toString("base64url");
+
+      const { error: invError } = await a.from("workspace_invitations").insert({
+        workspace_id: wsId,
+        email: users[2].email,
+        role: "member",
+        token_hash: hash(token),
+        invited_by: users[0].id,
+      });
+      if (invError) throw new Error(`create invitation: ${invError.message}`);
+      ok("Owner created an invitation (only the token hash is stored)");
+
+      const { data: info } = await anon.rpc("get_invitation", { p_token: token });
+      if (info?.status === "pending" && info.workspace_name === `Verify ${tag}`)
+        ok("Invite page lookup works for a signed-out visitor");
+      else fail(`get_invitation returned ${JSON.stringify(info)}`);
+
+      const { error: accError } = await c.rpc("accept_invitation", { p_token: token });
+      if (accError) throw new Error(`accept_invitation: ${accError.message}`);
+      const { data: cMember } = await c
+        .from("workspace_members")
+        .select("role")
+        .eq("workspace_id", wsId)
+        .eq("user_id", users[2].id)
+        .maybeSingle();
+      if (cMember?.role === "member") ok("Invitee accepted and joined as Member");
+      else fail("Invitee membership missing after accepting");
+
+      const { error: reuse } = await b.rpc("accept_invitation", { p_token: token });
+      if (reuse) ok("A used invitation cannot be accepted again");
+      else fail("An invitation was accepted twice");
+
+      const { error: roleError } = await a
+        .from("workspace_members")
+        .update({ role: "manager" })
+        .eq("workspace_id", wsId)
+        .eq("user_id", users[2].id);
+      if (roleError) fail(`Owner could not change a role: ${roleError.message}`);
+      else ok("Owner promoted the invitee to Manager");
+
+      const { error: mgrInvite } = await c.from("workspace_invitations").insert({
+        workspace_id: wsId,
+        email: `cf-verify-${tag}-x@example.com`,
+        role: "member",
+        token_hash: hash(randomBytes(32).toString("base64url")),
+        invited_by: users[2].id,
+      });
+      if (mgrInvite) ok("Managers cannot send invitations (admins only)");
+      else fail("A manager was able to create an invitation");
+
+      const { data: client, error: clientError } = await c
+        .from("clients")
+        .insert({ workspace_id: wsId, name: "Verify Client", email: "client@example.com", created_by: users[2].id })
+        .select("id")
+        .single();
+      if (clientError) throw new Error(`create client: ${clientError.message}`);
+      ok("Manager created a client");
+
+      const { data: project, error: projectError } = await c
+        .from("projects")
+        .insert({ workspace_id: wsId, client_id: client.id, name: "Verify Project", created_by: users[2].id })
+        .select("id")
+        .single();
+      if (projectError) throw new Error(`create project: ${projectError.message}`);
+      const { error: statusError } = await c.from("projects").update({ status: "in_progress" }).eq("id", project.id);
+      if (statusError) fail(`Project status update failed: ${statusError.message}`);
+      else ok("Manager created a project and moved it to In progress");
+
+      const { data: task, error: taskError } = await c
+        .from("tasks")
+        .insert({
+          workspace_id: wsId,
+          project_id: project.id,
+          title: "Verify Task",
+          assignee_id: users[2].id,
+          created_by: users[2].id,
+        })
+        .select("id, position")
+        .single();
+      if (taskError) throw new Error(`create task: ${taskError.message}`);
+      ok("Task created and assigned to a team member");
+
+      const { error: badAssignee } = await c.from("tasks").update({ assignee_id: users[1].id }).eq("id", task.id);
+      if (badAssignee) ok("Tasks cannot be assigned to someone outside the workspace");
+      else fail("A task was assigned to a user from another workspace");
+
+      const { data: doneTask } = await c
+        .from("tasks")
+        .update({ status: "done" })
+        .eq("id", task.id)
+        .select("completed_at")
+        .single();
+      if (doneTask?.completed_at) ok("Completing a task records completed_at");
+      else fail("completed_at was not set when the task was completed");
+
+      const { data: log } = await a.from("activity_log").select("action").eq("workspace_id", wsId);
+      const actions = new Set((log ?? []).map((l) => l.action));
+      const expected = [
+        "invitation.created",
+        "member.joined",
+        "member.role_changed",
+        "client.created",
+        "project.created",
+        "project.status_changed",
+        "task.created",
+        "task.completed",
+      ];
+      const missing = expected.filter((x) => !actions.has(x));
+      if (missing.length === 0) ok("Activity log recorded every Phase 2 event");
+      else fail(`Activity log is missing: ${missing.join(", ")}`);
+
+      const [bClients, bProjects, bTasks] = await Promise.all([
+        b.from("clients").select("id").eq("id", client.id),
+        b.from("projects").select("id").eq("id", project.id),
+        b.from("tasks").select("id").eq("id", task.id),
+      ]);
+      const leaked = [bClients, bProjects, bTasks].some((r) => (r.data ?? []).length > 0);
+      const { data: bUpdate } = await b.from("projects").update({ name: "pwned" }).eq("id", project.id).select("id");
+      if (!leaked && !bUpdate?.length) ok("Other agencies cannot read or change clients, projects or tasks");
+      else fail("TENANT ISOLATION BROKEN for Phase 2 data");
     } catch (error) {
       fail(`End-to-end test stopped: ${error.message}`);
     } finally {

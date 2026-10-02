@@ -71,6 +71,11 @@ The default templates also work, but only when the link is opened in the same br
 For production, configure **custom SMTP** (Authentication → SMTP Settings). Supabase's built-in email sender is
 heavily rate-limited and is meant for testing only.
 
+### Applying later migrations
+
+When you pull new code that adds files to `supabase/migrations/`, run `npx supabase migration list`,
+`npx supabase db push --dry-run` and then `npx supabase db push`. Only the new files are applied.
+
 ## 5. Verify the project
 
 ```bash

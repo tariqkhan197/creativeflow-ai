@@ -21,15 +21,27 @@ their phase number; they never link to empty pages.
 - [x] Settings: profile and workspace name
 - [x] Landing page
 
-## Phase 2 — Team, clients & projects
+## Phase 2 — Team, clients & projects ✅
 
-- Team page: list members, change roles, remove members (admins); pending invitations
-- Invitations: create token server-side, email the link (Supabase Auth invite / SMTP), `/invite/[token]` accept page
-  calling `accept_invitation`
-- Clients CRUD with search and pagination
-- Projects: list (filters by status/client/priority), create/edit dialog, detail page with overview, tasks board
-  (drag to reorder/change status), assigned team, archive
-- Activity log entries for all mutations
+- [x] Team page: members, role changes and removal (owner manages admins; admins manage managers/members), leave
+      workspace, pending invitations with revoke
+- [x] Invitations: secure one-time link (token stored as a SHA-256 hash, 7-day expiry, email must match),
+      `/invite/[token]` page, sign-up / sign-in hand-off, accept via `accept_invitation`
+- [x] Clients: list with search and pagination, create/edit dialog, detail page with projects, delete
+- [x] Projects: list with search, status/client filters, active/archived views, pagination, task progress; create/edit
+      dialog; detail page with status, archive/restore, delete and project team
+- [x] Tasks: board with To do / In progress / Review / Done, create/edit, assign (staff only), due dates, move between
+      columns, delete (creator or manager)
+- [x] Activity log written by database triggers for every Phase 2 mutation, shown on the dashboard
+- [x] Tests: 25 new DB tests (54 total, run with and without default grants), Vitest unit tests for validation,
+      permissions and activity, and Phase 2 flows in `npm run verify:supabase -- --e2e`
+
+Deliberately not in Phase 2:
+
+- Invite emails are not sent automatically. The admin copies the one-time link and shares it. Automated email arrives
+  with the notifications work in Phase 7.
+- Client-role invitations (client portal access) arrive in Phase 4.
+- Tasks move between columns with a status selector. Drag-and-drop ordering is not implemented.
 
 ## Phase 3 — Media & timestamped review
 

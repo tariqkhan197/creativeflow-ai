@@ -904,6 +904,58 @@ async function main() {
     assert.equal((await activity(wsA, "member.left")).at(-1)?.actor_id, frank);
   });
 
+  console.log("\nPhase 2 · Cleanup");
+  await test("deleting a populated workspace removes all of its data", async () => {
+    const tmp = await as(
+      alice,
+      async (tx) => (await tx.query(`select public.create_workspace('Cascade WS', 'cascade-ws') as id`)).rows[0].id,
+    );
+    await inviteAndAccept(alice, tmp, "erin@agency-a.test", "manager", erin);
+    const cid = await as(
+      erin,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.clients (workspace_id, name, created_by) values ($1, 'C', $2) returning id`,
+            [tmp, erin],
+          )
+        ).rows[0].id,
+    );
+    const pid = await as(
+      erin,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.projects (workspace_id, client_id, name, created_by) values ($1, $2, 'P1', $3) returning id`,
+            [tmp, cid, erin],
+          )
+        ).rows[0].id,
+    );
+    await as(erin, (tx) =>
+      tx.query(
+        `insert into public.tasks (workspace_id, project_id, title, created_by, assignee_id) values ($1, $2, 'T', $3, $3)`,
+        [tmp, pid, erin],
+      ),
+    );
+    await as(erin, (tx) =>
+      tx.query(`insert into public.project_members (project_id, workspace_id, user_id) values ($1, $2, $3)`, [
+        pid,
+        tmp,
+        erin,
+      ]),
+    );
+    await as(alice, (tx) => tx.query(`delete from public.workspaces where id = $1`, [tmp]));
+    const { rows } = await db.query(
+      `select (select count(*) from public.workspace_members where workspace_id = $1)
+            + (select count(*) from public.clients where workspace_id = $1)
+            + (select count(*) from public.projects where workspace_id = $1)
+            + (select count(*) from public.tasks where workspace_id = $1)
+            + (select count(*) from public.activity_log where workspace_id = $1) as n`,
+      [tmp],
+    );
+    assert.equal(Number(rows[0].n), 0);
+  });
+
   console.log(`\n${passed} passed${process.exitCode ? ", some FAILED" : ""}`);
 }
 

@@ -58,6 +58,7 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 | `accept_invitation(p_token)`                      | definer  | Validates token hash, expiry and email match; adds membership          |
 | `decide_approval(p_approval, p_decision, p_note)` | definer  | Approve / request changes; creates revision round + notification       |
 | `workspace_overview(p_workspace)`                 | invoker  | Dashboard metrics from real rows (finance only for managers+)          |
+| `get_invitation(p_token)`                         | definer  | Invite page lookup: workspace, email, role, inviter, status (anon OK)  |
 
 ## Access matrix (RLS)
 
@@ -90,6 +91,16 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 - `20261001000000_initial_schema.sql`: the full schema, RLS, storage and RPCs.
 - `20261001000100_explicit_api_grants.sql`: explicit Data API grants, so the schema also works on projects created
   with automatic table grants turned off. `npm run test:db` runs the suite in both modes.
+- `20261002000000_phase2_team_projects.sql`: Phase 2 rules, listed below.
+
+### Phase 2 database rules
+
+| Rule                                                                           | Where                                       |
+| ------------------------------------------------------------------------------ | ------------------------------------------- |
+| Only the owner can grant, change or remove the `admin` role (admins may leave) | `protect_workspace_members` trigger         |
+| Task assignees and project-team members must be staff of the same workspace    | `tasks_prepare`, `project_members_validate` |
+| `completed_at` set/cleared with status; new/moved tasks go to the column end   | `tasks_prepare` trigger                     |
+| Audit rows for clients, projects, tasks, invitations and members               | `*_audit` triggers → `activity_log`         |
 
 - Never edit an applied migration. Add a new file: `npx supabase migration new <name>`.
 - Run `npm run test:db` after every schema change; add a test for every new policy.
