@@ -91,8 +91,21 @@ project allows" error.
 
 ### Realtime
 
-The Phase 3 migration adds `review_comments` to the `supabase_realtime` publication. Check it under Database →
-Publications → `supabase_realtime`. `npm run verify:supabase -- --e2e` confirms live delivery end to end.
+The migrations add `review_comments` (and `notifications`) to the `supabase_realtime` publication. To check it on
+your project, open Dashboard → SQL Editor and run (read-only):
+
+```sql
+select schemaname, tablename
+from pg_publication_tables
+where pubname = 'supabase_realtime'
+order by tablename;
+```
+
+`review_comments` should be listed. `npm run verify:supabase` also checks it: the Realtime server either confirms
+a subscription on the table or rejects it with `RealtimeDisabledForConfiguration`.
+
+If it is missing, enable it under Database → Publications → `supabase_realtime`. Live updates still respect RLS for
+each subscriber.
 
 ## 5. Verify the project
 

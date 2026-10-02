@@ -3,6 +3,7 @@
 // the live-comment merge/dedupe/delete paths run without a Supabase project.
 type Handler = (payload: { new?: unknown; old?: unknown }) => void;
 type W = Window & {
+  __channelOptions?: unknown[];
   __realtime?: {
     emit: (event: string, payload: { new?: unknown; old?: unknown }) => void;
     status: (s: string) => void;
@@ -33,7 +34,11 @@ export function createClient() {
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
     },
     realtime: { setAuth: () => undefined },
-    channel: () => channel,
+    channel: (_name: string, options?: unknown) => {
+      const w = window as W;
+      (w.__channelOptions ??= []).push(options);
+      return channel;
+    },
     removeChannel: async () => undefined,
   };
 }

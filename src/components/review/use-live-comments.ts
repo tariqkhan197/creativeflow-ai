@@ -43,10 +43,15 @@ export function useLiveComments(
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (cancelled) return;
-      if (data.session) supabase.realtime.setAuth(data.session.access_token);
+      if (data.session) await supabase.realtime.setAuth(data.session.access_token);
+      if (cancelled) return;
 
       channel = supabase
-        .channel(`review-comments:${assetId}`)
+        // `wait: true`: report SUBSCRIBED only once the server confirms the
+        // postgres_changes subscription is active. Without it, SUBSCRIBED can
+        // arrive before the replication stream is live and early comments are
+        // silently missed while the UI already says "Live".
+        .channel(`review-comments:${assetId}`, { config: { postgres_changes_options: { wait: true } } })
         .on(
           "postgres_changes",
           { event: "INSERT", schema: "public", table: "review_comments", filter: `asset_id=eq.${assetId}` },
@@ -67,7 +72,7 @@ export function useLiveComments(
           const id = (payload.old as { id?: unknown }).id;
           if (typeof id === "string") latest.current.onDelete(id);
         })
-        .subscribe((state) => {
+        .subscribe((state, err) => {
           if (state === "SUBSCRIBED") {
             setStatus("live");
             if (wasLive) {
@@ -76,6 +81,13 @@ export function useLiveComments(
               });
             }
             wasLive = true;
+          } else if (
+            state === "CHANNEL_ERROR" &&
+            /RealtimeDisabledForConfiguration/i.test(`${err?.message ?? ""} ${JSON.stringify(err?.cause ?? "")}`)
+          ) {
+            // review_comments isn't in the supabase_realtime publication; retrying won't help.
+            console.error("Realtime is not enabled for review_comments on this Supabase project.", err);
+            setStatus("offline");
           } else if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
             setStatus("reconnecting");
           } else if (state === "CLOSED") {

@@ -253,6 +253,18 @@ if (admin) {
     }
   }
 
+  section("Realtime");
+  {
+    const result = await probeRealtimeTable(anon, "review_comments");
+    if (result === "enabled") ok("review_comments is enabled for Realtime (server confirmed the subscription)");
+    else if (result === "not-in-publication") {
+      fail(
+        "review_comments is NOT in the supabase_realtime publication on this project",
+        "Database → Publications → supabase_realtime → enable review_comments (see docs/SETUP.md › Realtime)",
+      );
+    } else fail(`Realtime subscription on review_comments failed: ${result}`);
+  }
+
   section("Storage");
   const { data: buckets, error: bucketError } = await admin.storage.listBuckets();
   if (bucketError) fail(`Could not list buckets: ${bucketError.message}`);
@@ -635,25 +647,26 @@ if (E2E) {
       await c.from("assets").update({ shared_with_client: true }).eq("id", v2.id);
 
       // 7. Realtime: staff (a) and client (d) subscribe; outsider (b) must receive nothing.
+      // `wait: true`: SUBSCRIBED only fires once the server confirms the postgres_changes
+      // subscription is live (without it, SUBSCRIBED can arrive before the replication
+      // stream is active and early inserts are silently missed). If review_comments is
+      // not in the supabase_realtime publication the server rejects the join with
+      // RealtimeDisabledForConfiguration.
       const subscribe = async (client, label) => {
-        client.realtime.setAuth(await tokenOf(client));
+        await client.realtime.setAuth(await tokenOf(client));
         const events = [];
         const channel = await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error(`Realtime ${label}: subscription timed out`)), 15000);
           const ch = client
-            .channel(`verify-${label}-${tag}`)
+            .channel(`verify-${label}-${tag}`, { config: { postgres_changes_options: { wait: true } } })
             .on(
               "postgres_changes",
               { event: "INSERT", schema: "public", table: "review_comments", filter: `asset_id=eq.${v2.id}` },
               (p) => events.push(p.new),
             )
             .subscribe((status, err) => {
-              if (status === "SUBSCRIBED") {
-                clearTimeout(timer);
-                resolve(ch);
-              } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-                clearTimeout(timer);
-                reject(new Error(`Realtime ${label}: ${status} ${err?.message ?? ""}`));
+              if (status === "SUBSCRIBED") resolve(ch);
+              else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                reject(new Error(`Realtime ${label}: ${status} ${realtimeReason(err)}`));
               }
             });
         });
@@ -665,7 +678,7 @@ if (E2E) {
         subscribe(d, "client"),
         subscribe(b, "outsider"),
       ]);
-      ok("Realtime subscriptions established for staff, client and outsider sessions");
+      ok("Realtime subscriptions confirmed active by the server for staff, client and outsider sessions");
 
       const { data: internal, error: internalError } = await c
         .from("review_comments")
@@ -805,6 +818,39 @@ if (E2E) {
 }
 
 finish();
+
+/** Readable reason from a Realtime subscribe error (the server's reason is often in `cause`). */
+function realtimeReason(err) {
+  if (!err) return "";
+  const cause = err.cause && typeof err.cause === "object" ? JSON.stringify(err.cause) : "";
+  return [err.message, cause].filter(Boolean).join(" ");
+}
+
+/**
+ * Asks the Realtime server to establish a postgres_changes subscription on
+ * review_comments and waits for its confirmation. Resolves to "enabled",
+ * "not-in-publication" (server: RealtimeDisabledForConfiguration) or an error string.
+ */
+async function probeRealtimeTable(client, table) {
+  return new Promise((resolve) => {
+    const ch = client.channel(`verify-probe-${table}-${Date.now()}`, {
+      config: { postgres_changes_options: { wait: true } },
+    });
+    const done = (result) => {
+      void client.removeChannel(ch);
+      resolve(result);
+    };
+    ch.on("postgres_changes", { event: "INSERT", schema: "public", table }, () => undefined).subscribe(
+      (status, err) => {
+        if (status === "SUBSCRIBED") done("enabled");
+        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          const reason = realtimeReason(err);
+          done(/RealtimeDisabledForConfiguration/i.test(reason) ? "not-in-publication" : `${status} ${reason}`.trim());
+        }
+      },
+    );
+  });
+}
 
 /** Same rule as src/lib/media/file-types.ts resumableEndpoint(). */
 function resumableEndpoint(supabaseUrl) {

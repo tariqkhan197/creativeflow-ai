@@ -351,6 +351,12 @@ const makeWebm = `(async () => {
 
   // Live updates (Realtime events driven through the test seam).
   check("the panel reports a live connection", (await page.locator("text=Live").count()) >= 1);
+  const channelOptions = await page.evaluate(() => window.__channelOptions?.at(-1));
+  check(
+    "the live hook waits for the server to confirm the postgres_changes subscription",
+    channelOptions?.config?.postgres_changes_options?.wait === true,
+    JSON.stringify(channelOptions),
+  );
   const remote = {
     id: "00000000-0000-4000-8000-000000000001",
     asset_id: "a",
