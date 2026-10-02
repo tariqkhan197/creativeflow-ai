@@ -15,7 +15,7 @@
     "db:types": "supabase gen types typescript --linked --schema public > src/types/database.generated.ts",
     "verify:supabase": "node scripts/verify-supabase.mjs",
     "test:unit": "vitest run",
-    "test:browser": "node tests/browser/viewer.test.mjs"
+    "test:browser": "node tests/browser/review.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

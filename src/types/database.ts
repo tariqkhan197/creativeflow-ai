@@ -180,6 +180,8 @@ export type ReviewComment = {
   is_internal: boolean;
   resolved_at: string | null;
   resolved_by: string | null;
+  /** Set by the database when the text is edited. */
+  edited_at: string | null;
 } & Timestamps;
 
 export type Approval = {

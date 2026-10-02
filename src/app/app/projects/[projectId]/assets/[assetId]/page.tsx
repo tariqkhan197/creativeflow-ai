@@ -69,7 +69,7 @@ export default async function AssetReviewPage({ params }: PageProps<"/app/projec
   }
 
   const rootId = asset.root_asset_id ?? asset.id;
-  const [{ data: versions }, media] = await Promise.all([
+  const [{ data: versions }, media, { data: comments, error: commentsError }] = await Promise.all([
     supabase
       .from("assets")
       .select("id, version_number, name, size_bytes, created_at, uploaded_by, root_asset_id")
@@ -78,8 +78,26 @@ export default async function AssetReviewPage({ params }: PageProps<"/app/projec
       .or(`id.eq.${rootId},root_asset_id.eq.${rootId}`)
       .order("version_number", { ascending: false }),
     getAssetMediaUrls(asset.id),
+    supabase
+      .from("review_comments")
+      .select(
+        "id, asset_id, parent_id, author_id, body, timestamp_seconds, annotation, is_internal, resolved_at, resolved_by, edited_at, created_at, updated_at",
+      )
+      .eq("asset_id", asset.id)
+      .eq("workspace_id", active.id)
+      .order("created_at"),
   ]);
-  const uploaderIds = [...new Set((versions ?? []).map((v) => v.uploaded_by).filter((x): x is string => Boolean(x)))];
+  if (commentsError) throw new Error(`Could not load comments: ${commentsError.message}`);
+  const { data: members } = await supabase.from("workspace_members").select("user_id").eq("workspace_id", active.id);
+  const uploaderIds = [
+    ...new Set(
+      [
+        ...(versions ?? []).map((v) => v.uploaded_by),
+        ...(comments ?? []).map((c) => c.author_id),
+        ...(members ?? []).map((m) => m.user_id),
+      ].filter((x): x is string => Boolean(x)),
+    ),
+  ];
   const { data: profiles } = uploaderIds.length
     ? await supabase.from("profiles").select("id, full_name, email").in("id", uploaderIds)
     : { data: [] };
@@ -110,6 +128,10 @@ export default async function AssetReviewPage({ params }: PageProps<"/app/projec
       <ReviewWorkspace
         asset={asset}
         initialMedia={media.ok ? { url: media.url, downloadUrl: media.downloadUrl, expiresAt: media.expiresAt } : null}
+        initialComments={comments ?? []}
+        people={(profiles ?? []).map((p) => ({ id: p.id, name: p.full_name ?? p.email }))}
+        currentUserId={user.id}
+        canManage={canManage}
         side={
           <>
             <Card className="gap-3 py-4">

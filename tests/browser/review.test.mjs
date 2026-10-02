@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Browser test for the review viewers (video, audio, image, unsupported
- * formats, expired-URL recovery, keyboard shortcuts, pins).
+ * Browser test for the review page UI: viewers (video, audio, image,
+ * unsupported formats, expired-URL recovery, shortcuts, pins) and the comment
+ * workflow (timestamped comments, pins, replies, edit, resolve, filters, delete).
  *
  * Bundles the real components from src/components/review with esbuild and
  * drives them in Chromium using media generated in the page (a MediaRecorder
  * WebM, a canvas PNG, a synthesized WAV). The only stub is the signed-URL
- * server action (tests/browser/stub-asset-actions.ts), which needs Next.js +
- * Supabase. Requires a prior `npm run build` (for the app's compiled CSS) and
+ * and comment Server Actions (tests/browser/stub-*.ts), which need Next.js +
+ * Supabase; their rules are tested in scripts/test-db.mjs and verify:supabase. Requires a prior `npm run build` (for the app's compiled CSS) and
  * a Chromium for Playwright (`npx playwright install chromium`).
  *
  *   npm run build && npm run test:browser
@@ -28,13 +29,16 @@ if (!css.length) {
 }
 const dir = mkdtempSync(path.join(os.tmpdir(), "cf-viewer-"));
 await build({
-  entryPoints: [path.join(import.meta.dirname, "viewer-harness.tsx")],
+  entryPoints: [path.join(import.meta.dirname, "harness.tsx")],
   bundle: true,
   outfile: path.join(dir, "bundle.js"),
   format: "iife",
   jsx: "automatic",
   tsconfig: path.join(root, "tsconfig.json"),
-  alias: { "@/lib/actions/assets": path.join(import.meta.dirname, "stub-asset-actions.ts") },
+  alias: {
+    "@/lib/actions/assets": path.join(import.meta.dirname, "stub-asset-actions.ts"),
+    "@/lib/actions/comments": path.join(import.meta.dirname, "stub-comment-actions.ts"),
+  },
   define: { "process.env.NODE_ENV": '"development"' },
   logLevel: "warning",
 });
@@ -269,6 +273,85 @@ const makeWebm = `(async () => {
   await page.click('button[aria-label^="Comment at 0:01"]');
   await page.waitForTimeout(200);
   check("audio marker seeks", Math.abs(Number(await page.innerText("#time")) - 1) < 0.05);
+  await page.close();
+}
+
+{
+  // Comment workflow on the full review workspace.
+  const page = await fresh();
+  const src = await page.evaluate(makeWebm);
+  await page.evaluate((s) => window.mountWorkspace(s, "video", "video/webm", 2), src);
+  await page.waitForFunction(() => document.querySelector("video")?.readyState >= 1, null, { timeout: 10000 });
+  await page.evaluate(() => {
+    const v = document.querySelector("video");
+    v.currentTime = 1;
+  });
+  await page.waitForFunction(() => Math.abs(document.querySelector("video").currentTime - 1) < 0.05);
+  await page.waitForTimeout(200);
+
+  await page.keyboard.press("c");
+  const focused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+  check("C focuses the comment box", focused === "New comment");
+
+  await page.fill('textarea[aria-label="New comment"]', "Logo is too small");
+  await page.getByRole("button", { name: "Add pin", exact: true }).click();
+  const box = await page.locator("video").boundingBox();
+  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.4);
+  check("placing a pin attaches it to the draft", (await page.locator("text=Pin placed").count()) === 1);
+  await page.keyboard.press("Control+Enter");
+  await page.waitForSelector("li[id^=comment-]");
+  const stored = await page.evaluate(() => [...window.__comments.values()][0]);
+  check(
+    "posting stores the current timestamp and normalized pin",
+    Math.abs(stored.timestamp_seconds - 1) < 0.05 &&
+      Math.abs(stored.annotation.x - 0.3) < 0.02 &&
+      Math.abs(stored.annotation.y - 0.4) < 0.02,
+    JSON.stringify({ t: stored.timestamp_seconds, a: stored.annotation }),
+  );
+  check(
+    "the comment shows a jump-to timecode",
+    (await page.locator('button[aria-label="Jump to 0:01"]').count()) === 1,
+  );
+  check("a timeline marker appears", (await page.locator('button[aria-label^="Comment at 0:01"]').count()) === 1);
+  check(
+    "its pin is drawn on the paused frame",
+    (await page.locator('button[aria-label="Pin: Logo is too small"]').count()) === 1,
+  );
+
+  await page.evaluate(() => (document.querySelector("video").currentTime = 0));
+  await page.waitForTimeout(200);
+  await page.click('button[aria-label="Jump to 0:01"]');
+  await page.waitForTimeout(300);
+  check(
+    "clicking the timecode seeks the player",
+    Math.abs((await page.evaluate(() => document.querySelector("video").currentTime)) - 1) < 0.05,
+  );
+
+  await page.getByRole("button", { name: "Reply", exact: true }).click();
+  await page.fill('textarea[aria-label="Reply"]', "On it");
+  await page.click('form button:has-text("Reply")');
+  await page.waitForSelector("text=On it");
+  check("replies appear under their thread", (await page.locator("li[id^=comment-] ol >> text=On it").count()) === 1);
+
+  await page.locator('button[aria-label="Edit comment"]').first().click();
+  await page.fill('textarea[aria-label="Edit comment"]', "Logo is too small — make it 20% bigger");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForSelector("text=make it 20% bigger");
+  check("editing updates the text and marks it edited", (await page.locator("text=(edited)").count()) === 1);
+
+  await page.getByRole("button", { name: "Resolve", exact: true }).click();
+  await page.waitForSelector("text=No open comments.");
+  check("resolving removes the thread from Open", (await page.locator("li[id^=comment-]").count()) === 0);
+  await page.getByRole("tab", { name: /^resolved/ }).click();
+  check("the Resolved filter shows it", (await page.locator("text=make it 20% bigger").count()) === 1);
+  await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  await page.getByRole("tab", { name: /^open/ }).click();
+  check("reopening returns it to Open", (await page.locator("text=make it 20% bigger").count()) === 1);
+
+  await page.locator('button[aria-label="Delete comment"]').first().click();
+  await page.click('[role="alertdialog"] button:has-text("Delete")');
+  await page.waitForSelector("text=No open comments.");
+  check("deleting a thread removes it and its replies", (await page.locator("text=On it").count()) === 0);
   await page.close();
 }
 

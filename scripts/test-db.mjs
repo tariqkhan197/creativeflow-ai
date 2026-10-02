@@ -1323,6 +1323,58 @@ async function main() {
     );
   });
 
+  await test("edited_at is set by the database only when the text changes", async () => {
+    const fresh = await addComment(carol, { body: "Draft" });
+    assert.equal(fresh.edited_at, null);
+    const resolved = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(`update public.review_comments set resolved_at = now() where id = $1 returning edited_at`, [
+            fresh.id,
+          ])
+        ).rows[0],
+    );
+    assert.equal(resolved.edited_at, null);
+    const edited = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `update public.review_comments set body = 'Final', edited_at = null where id = $1 returning edited_at`,
+            [fresh.id],
+          )
+        ).rows[0],
+    );
+    assert.ok(edited.edited_at);
+    const spoof = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(`update public.review_comments set edited_at = null where id = $1 returning edited_at`, [
+            fresh.id,
+          ])
+        ).rows[0],
+    );
+    assert.ok(spoof.edited_at, "edited_at cannot be cleared by the client");
+  });
+
+  await test("only the author or a manager can delete a comment; replies go with their thread", async () => {
+    const own = await addComment(erin, { body: "Erin's note" });
+    const reply = await addComment(carol, { parent: own.id, body: "Reply" });
+    const byOther = await as(erin, (tx) => tx.query(`delete from public.review_comments where id = $1`, [c1.id]));
+    assert.equal(byOther.affectedRows, 0);
+    const outsider = await as(bob, (tx) => tx.query(`delete from public.review_comments where id = $1`, [own.id]));
+    assert.equal(outsider.affectedRows, 0);
+    const byManager = await as(alice, (tx) => tx.query(`delete from public.review_comments where id = $1`, [own.id]));
+    assert.equal(byManager.affectedRows, 1);
+    const left = await db.query(`select id from public.review_comments where id = $1`, [reply.id]);
+    assert.equal(left.rows.length, 0);
+    const mine = await addComment(erin, { body: "Mine" });
+    const self = await as(erin, (tx) => tx.query(`delete from public.review_comments where id = $1`, [mine.id]));
+    assert.equal(self.affectedRows, 1);
+  });
+
   console.log("\nPhase 3 · Activity & summary");
   await test("uploads, versions, comments and resolutions are logged", async () => {
     const acts = (

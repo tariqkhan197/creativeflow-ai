@@ -335,6 +335,9 @@ $$;
 alter table public.review_comments
   add constraint review_comments_annotation_valid check (private.is_valid_annotation(annotation)) not valid;
 
+-- Set by the database only when the text changes (resolving doesn't count as an edit).
+alter table public.review_comments add column edited_at timestamptz;
+
 create index review_comments_parent_idx on public.review_comments (parent_id) where parent_id is not null;
 create index review_comments_open_idx on public.review_comments (asset_id) where parent_id is null and resolved_at is null;
 
@@ -357,6 +360,7 @@ begin
 
     new.resolved_at := null;
     new.resolved_by := null;
+    new.edited_at := null;
 
     if new.parent_id is not null then
       select * into parent from public.review_comments where id = new.parent_id;
@@ -397,6 +401,11 @@ begin
 
   if new.body <> old.body and actor is not null and actor is distinct from old.author_id then
     raise exception 'Only the author can edit a comment' using errcode = '42501';
+  end if;
+  if new.body <> old.body then
+    new.edited_at := now();
+  else
+    new.edited_at := old.edited_at;
   end if;
 
   if new.resolved_at is distinct from old.resolved_at then
