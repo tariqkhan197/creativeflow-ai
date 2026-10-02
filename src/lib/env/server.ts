@@ -19,6 +19,15 @@ export const serverEnv = {
   anthropicModel: clean(process.env.ANTHROPIC_MODEL) ?? "claude-sonnet-5-5",
   stripeSecretKey: clean(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: clean(process.env.STRIPE_WEBHOOK_SECRET),
+  /**
+   * Optional: the project-wide Storage upload limit in bytes (Supabase
+   * Dashboard → Storage → Settings). It is plan dependent and cannot be read
+   * through the API, so set it to get a clear error before an upload starts.
+   */
+  storageMaxUploadBytes: (() => {
+    const n = Number(clean(process.env.STORAGE_MAX_UPLOAD_BYTES));
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
+  })(),
 } as const;
 
 export type IntegrationStatus = {
