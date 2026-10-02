@@ -31,3 +31,7 @@ export function formatRelativeTime(iso: string, now = Date.now()): string {
   }
   return "just now";
 }
+
+export function isPast(iso: string, now = Date.now()): boolean {
+  return new Date(iso).getTime() < now;
+}

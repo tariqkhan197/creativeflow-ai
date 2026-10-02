@@ -54,7 +54,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Workspace",
     items: [
-      { label: "Team", href: "/app/team", icon: "team", plannedPhase: 2, roles: STAFF },
+      { label: "Team", href: "/app/team", icon: "team", roles: STAFF },
       { label: "Settings", href: "/app/settings", icon: "settings" },
     ],
   },

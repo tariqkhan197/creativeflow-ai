@@ -6,7 +6,12 @@ export type FormState = {
   fieldErrors?: Record<string, string[] | undefined>;
   /** Echoed values so inputs keep their content after a failed submit. */
   values?: Record<string, string>;
+  /** Extra result data for the client (e.g. a one-time invite link). */
+  data?: Record<string, string>;
 };
+
+/** Result of a non-form Server Action (buttons, selects). */
+export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
 export const initialFormState: FormState = { status: "idle" };
 

@@ -32,7 +32,10 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
       <LoginForm next={next} disabled={!isSupabaseConfigured} />
       <p className="text-center text-sm text-muted-foreground">
         New to CreativeFlow?{" "}
-        <Link href="/signup" className="font-medium text-foreground hover:underline">
+        <Link
+          href={next?.startsWith("/invite/") ? `/signup?next=${encodeURIComponent(next)}` : "/signup"}
+          className="font-medium text-foreground hover:underline"
+        >
           Create an account
         </Link>
       </p>

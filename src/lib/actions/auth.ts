@@ -1,6 +1,8 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { PENDING_INVITE_COOKIE, PENDING_INVITE_COOKIE_OPTIONS } from "@/lib/cookies";
 import { isSupabaseConfigured, publicEnv } from "@/lib/env/public";
 import { createClient } from "@/lib/supabase/server";
 import { safeRedirectPath } from "@/lib/routes";
@@ -60,6 +62,10 @@ export async function signUp(_prev: FormState, formData: FormData): Promise<Form
   const parsed = signUpSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { status: "error", fieldErrors: fieldErrorsFrom(parsed.error), values };
 
+  // Only invitation links are honoured as a post-sign-up destination.
+  const next = safeRedirectPath(formData.get("next"), "/onboarding");
+  const afterSignup = next.startsWith("/invite/") ? next : "/onboarding";
+
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
@@ -78,7 +84,13 @@ export async function signUp(_prev: FormState, formData: FormData): Promise<Form
   }
 
   // Email confirmation disabled in Supabase → the user is signed in already.
-  if (data.session) redirect("/onboarding");
+  if (data.session) redirect(afterSignup);
+
+  // The confirmation email returns to /auth/confirm; this cookie lets it continue
+  // to the invitation when the link is opened in the same browser.
+  if (afterSignup !== "/onboarding") {
+    (await cookies()).set(PENDING_INVITE_COOKIE, afterSignup, PENDING_INVITE_COOKIE_OPTIONS);
+  }
 
   return {
     status: "success",
@@ -138,10 +150,11 @@ export async function updatePassword(_prev: FormState, formData: FormData): Prom
   redirect("/app?password=updated");
 }
 
-export async function signOut(): Promise<void> {
+export async function signOut(formData?: FormData): Promise<void> {
   if (isSupabaseConfigured) {
     const supabase = await createClient();
     await supabase.auth.signOut();
   }
-  redirect("/login");
+  const next = formData ? safeRedirectPath(formData.get("next"), "") : "";
+  redirect(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
 }

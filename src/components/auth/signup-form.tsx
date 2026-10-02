@@ -8,7 +8,7 @@ import { FormField } from "@/components/forms/form-field";
 import { FormMessage } from "@/components/forms/form-message";
 import { SubmitButton } from "@/components/forms/submit-button";
 
-export function SignupForm({ disabled }: { disabled?: boolean }) {
+export function SignupForm({ disabled, next, email }: { disabled?: boolean; next?: string; email?: string }) {
   const [state, action] = useActionState(signUp, initialFormState);
 
   if (state.status === "success") {
@@ -26,6 +26,7 @@ export function SignupForm({ disabled }: { disabled?: boolean }) {
   return (
     <form action={action} className="grid gap-5" noValidate>
       <FormMessage state={state} />
+      {next ? <input type="hidden" name="next" value={next} /> : null}
       <FormField
         label="Full name"
         name="fullName"
@@ -44,7 +45,7 @@ export function SignupForm({ disabled }: { disabled?: boolean }) {
         placeholder="you@agency.com"
         required
         disabled={disabled}
-        defaultValue={state.values?.email}
+        defaultValue={state.values?.email ?? email}
         errors={state.fieldErrors?.email}
       />
       <FormField

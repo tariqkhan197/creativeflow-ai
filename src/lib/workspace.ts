@@ -5,9 +5,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireUser, type SessionUser } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
+import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/cookies";
 import type { Profile, Workspace, WorkspaceRole } from "@/types/database";
 
-export const ACTIVE_WORKSPACE_COOKIE = "cf_workspace";
+export { ACTIVE_WORKSPACE_COOKIE };
 
 export type WorkspaceWithRole = Workspace & { role: WorkspaceRole; client_id: string | null };
 
@@ -74,10 +75,4 @@ export function hasRole(role: WorkspaceRole, allowed: WorkspaceRole[]) {
   return allowed.includes(role);
 }
 
-export const ROLE_LABELS: Record<WorkspaceRole, string> = {
-  owner: "Owner",
-  admin: "Admin",
-  manager: "Manager",
-  member: "Member",
-  client: "Client",
-};
+export { ROLE_LABELS } from "@/lib/roles";

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { Database } from "@/types/database";
 import { getSupabasePublicConfig, isSupabaseConfigured } from "@/lib/env/public";
-import { AUTH_ROUTES, PROTECTED_PREFIXES } from "@/lib/routes";
+import { AUTH_ROUTES, PROTECTED_PREFIXES, safeRedirectPath } from "@/lib/routes";
 
 /**
  * Refreshes the Supabase session cookie on every matched request and applies
@@ -62,7 +62,8 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (isSignedIn && AUTH_ROUTES.includes(pathname)) {
-    return redirectTo("/app");
+    const next = safeRedirectPath(request.nextUrl.searchParams.get("next"));
+    return redirectTo(next.split("?")[0]);
   }
 
   return response;

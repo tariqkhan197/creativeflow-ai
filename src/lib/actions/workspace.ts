@@ -6,17 +6,10 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
-import { ACTIVE_WORKSPACE_COOKIE, ADMIN_ROLES, getUserWorkspaces } from "@/lib/workspace";
+import { ACTIVE_WORKSPACE_COOKIE, ACTIVE_WORKSPACE_COOKIE_OPTIONS as COOKIE_OPTIONS } from "@/lib/cookies";
+import { ADMIN_ROLES, getUserWorkspaces } from "@/lib/workspace";
 import { createWorkspaceSchema, updateProfileSchema, updateWorkspaceSchema } from "@/lib/validation/workspace";
 import { echoValues, fieldErrorsFrom, type FormState } from "./types";
-
-const COOKIE_OPTIONS = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
-  path: "/",
-  maxAge: 60 * 60 * 24 * 365,
-};
 
 export async function createWorkspace(_prev: FormState, formData: FormData): Promise<FormState> {
   await requireUser("/onboarding");
