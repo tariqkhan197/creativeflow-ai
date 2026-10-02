@@ -35,3 +35,13 @@ export function formatRelativeTime(iso: string, now = Date.now()): string {
 export function isPast(iso: string, now = Date.now()): boolean {
   return new Date(iso).getTime() < now;
 }
+
+/**
+ * Formats a date (YYYY-MM-DD or ISO timestamp). Date-only values are treated as
+ * calendar dates, so they never shift a day because of the viewer's time zone.
+ */
+export function formatDate(value: string, options: Intl.DateTimeFormatOptions = { dateStyle: "medium" }): string {
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(dateOnly ? `${value}T00:00:00Z` : value);
+  return new Intl.DateTimeFormat("en-US", { ...options, ...(dateOnly ? { timeZone: "UTC" } : {}) }).format(date);
+}

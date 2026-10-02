@@ -57,13 +57,14 @@ export function parsePage(value: unknown): number {
   return Number.isFinite(n) && n >= 1 && n <= 10_000 ? n : 1;
 }
 
-/** Escape a user search term for a PostgREST `ilike` filter. */
-export function toIlikePattern(term: string): string {
-  const safe = term
-    .trim()
-    .slice(0, 100)
-    .replace(/[\\%_]/g, (c) => `\\${c}`)
-    // Characters with meaning in PostgREST filter syntax.
-    .replace(/[(),."]/g, " ");
-  return `%${safe}%`;
+/**
+ * Builds a PostgREST `or=(...)` filter that matches `term` case-insensitively
+ * in any of `columns`. The value is double-quoted so punctuation such as "."
+ * or "," is searched literally; `"` and `\` (which would break the quoting)
+ * are dropped. LIKE wildcards typed by the user only broaden the match, and
+ * RLS still limits rows to the caller's workspace.
+ */
+export function ilikeAny(columns: string[], term: string): string {
+  const safe = term.trim().slice(0, 100).replace(/["\\]/g, "");
+  return columns.map((c) => `${c}.ilike."%${safe}%"`).join(",");
 }

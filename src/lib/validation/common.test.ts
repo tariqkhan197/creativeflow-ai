@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMoneyToCents, parsePage, toIlikePattern } from "./common";
+import { ilikeAny, parseMoneyToCents, parsePage } from "./common";
 
 describe("parseMoneyToCents", () => {
   it.each([
@@ -27,12 +27,11 @@ describe("parsePage", () => {
   it("accepts positive integers", () => expect(parsePage("4")).toBe(4));
 });
 
-describe("toIlikePattern", () => {
-  it("wraps the term and escapes LIKE wildcards", () => {
-    expect(toIlikePattern(" acme ")).toBe("%acme%");
-    expect(toIlikePattern("50%_off")).toBe("%50\\%\\_off%");
+describe("ilikeAny", () => {
+  it("builds a quoted, case-insensitive OR filter", () => {
+    expect(ilikeAny(["name", "email"], " acme.com ")).toBe('name.ilike."%acme.com%",email.ilike."%acme.com%"');
   });
-  it("neutralises PostgREST filter syntax characters", () => {
-    expect(toIlikePattern("a,b(c).d")).toBe("%a b c  d%");
+  it("drops characters that would break PostgREST quoting", () => {
+    expect(ilikeAny(["name"], 'a"b\\c),name.eq.x')).toBe('name.ilike."%abc),name.eq.x%"');
   });
 });

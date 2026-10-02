@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/app/empty-state";
 import { PageHeader } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { activityHref, describeActivity, referencedUserIds } from "@/lib/activity";
 import { getIntegrationStatus } from "@/lib/env/server";
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney, formatRelativeTime } from "@/lib/utils";
@@ -39,6 +40,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/app">)
           </>
         }
       />
+      {params.joined === "1" ? (
+        <p className="rounded-lg border border-success/30 bg-success/5 px-4 py-3 text-sm text-success" role="status">
+          You&apos;ve joined {active.name}. Welcome to the team!
+        </p>
+      ) : null}
       {params.password === "updated" ? (
         <p className="rounded-lg border border-success/30 bg-success/5 px-4 py-3 text-sm text-success" role="status">
           Your password has been updated.
@@ -59,7 +65,7 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
     supabase.rpc("workspace_overview", { p_workspace: workspace.id }),
     supabase
       .from("activity_log")
-      .select("id, actor_id, entity_type, action, metadata, created_at")
+      .select("id, actor_id, entity_type, entity_id, action, metadata, created_at")
       .eq("workspace_id", workspace.id)
       .order("created_at", { ascending: false })
       .limit(8),
@@ -70,7 +76,7 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
   const overview = overviewData as WorkspaceOverview;
   const canSeeFinance = MANAGER_ROLES.includes(workspace.role);
 
-  const actorIds = [...new Set((activity ?? []).map((a) => a.actor_id).filter((id): id is string => Boolean(id)))];
+  const actorIds = referencedUserIds(activity ?? []);
   const { data: actors } = actorIds.length
     ? await supabase.from("profiles").select("id, full_name, email").in("id", actorIds)
     : { data: [] };
@@ -114,10 +120,10 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
   ];
 
   const checklist = [
-    { label: "Create your workspace", done: true },
-    { label: "Invite your team", done: overview.members > 1, phase: 2 },
-    { label: "Add your first client", done: overview.clients > 0, phase: 2 },
-    { label: "Create your first project", done: overview.active_projects > 0, phase: 2 },
+    { label: "Create your workspace", done: true, href: undefined as string | undefined },
+    { label: "Invite your team", done: overview.members > 1, href: "/app/team" },
+    { label: "Add your first client", done: overview.clients > 0, href: "/app/clients" },
+    { label: "Create your first project", done: overview.active_projects > 0, href: "/app/projects?new=1" },
   ];
   const completed = checklist.filter((c) => c.done).length;
 
@@ -156,7 +162,14 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
                     </span>
                     <div className="grid gap-0.5">
                       <p className="text-sm">
-                        <span className="font-medium">{actorName(a.actor_id)}</span> {describeAction(a.action)}
+                        <span className="font-medium">{actorName(a.actor_id)}</span>{" "}
+                        {activityHref(a) ? (
+                          <Link href={activityHref(a)!} className="hover:underline">
+                            {describeActivity(a, actorName)}
+                          </Link>
+                        ) : (
+                          describeActivity(a, actorName)
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">{formatRelativeTime(a.created_at)}</p>
                     </div>
@@ -197,10 +210,10 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
                       <CircleIcon className="size-4 text-muted-foreground/60" />
                     )}
                     <span className={item.done ? "text-muted-foreground line-through" : ""}>{item.label}</span>
-                    {!item.done && item.phase ? (
-                      <Badge variant="outline" className="ml-auto text-[10px] text-muted-foreground">
-                        Phase {item.phase}
-                      </Badge>
+                    {!item.done && item.href ? (
+                      <Link href={item.href} className="ml-auto text-xs font-medium text-brand hover:underline">
+                        Start →
+                      </Link>
                     ) : null}
                   </li>
                 ))}
@@ -237,17 +250,6 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
       </div>
     </>
   );
-}
-
-const ACTION_LABELS: Record<string, string> = {
-  "workspace.created": "created the workspace",
-  "member.joined": "joined the workspace",
-  "approval.approved": "approved a deliverable",
-  "approval.changes_requested": "requested changes",
-};
-
-function describeAction(action: string) {
-  return ACTION_LABELS[action] ?? action.replace(/[._]/g, " ");
 }
 
 /* -------------------------------------------------------------------------- */
