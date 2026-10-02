@@ -326,12 +326,18 @@ async function main() {
       ),
     );
     await as(dana, (tx) => tx.query(`select public.accept_invitation($1)`, [t2]));
-    const rows = await as(dana, async (tx) => (await tx.query(`select id from public.projects`)).rows);
+    // Phase 4 (G1): clients read projects through portal_projects() only.
+    const rows = await as(
+      dana,
+      async (tx) => (await tx.query(`select id from public.portal_projects($1)`, [wsA])).rows,
+    );
     assert.deepEqual(
       rows.map((r) => r.id),
       [projectId],
     );
     assert.ok(!rows.some((r) => r.id === hiddenProjectId));
+    const direct = await as(dana, async (tx) => (await tx.query(`select id from public.projects`)).rows);
+    assert.equal(direct.length, 0);
   });
 
   await test("client users cannot read tasks or AI generations", async () => {
@@ -347,11 +353,9 @@ async function main() {
   });
 
   await test("client users cannot see other members' client records", async () => {
+    // Phase 4 (G1): not even their own record (it holds the agency's private notes).
     const rows = await as(dana, async (tx) => (await tx.query(`select id from public.clients`)).rows);
-    assert.deepEqual(
-      rows.map((r) => r.id),
-      [clientId],
-    );
+    assert.equal(rows.length, 0);
   });
 
   await test("workspace_overview is denied to clients and outsiders", async () => {
@@ -1434,6 +1438,647 @@ async function main() {
     const { id } = await uploadAsset(carol, wsA, project2, { file: "keep.mp4" });
     const res = await as(erin, (tx) => tx.query(`delete from public.assets where id = $1`, [id]));
     assert.equal(res.affectedRows, 0);
+  });
+
+  /* ======================================================================== */
+  /* Phase 4: client portal & approvals                                       */
+  /* ======================================================================== */
+
+  const gina = await createUser("gina@portal.test", "Gina");
+  const helen = await createUser("helen@portal.test", "Helen");
+  async function clientInvite(inviter, ws, email, cid) {
+    const t = newToken();
+    await as(inviter, (tx) =>
+      tx.query(
+        `insert into public.workspace_invitations (workspace_id, email, role, client_id, token_hash, invited_by)
+         values ($1, $2, 'client', $3, $4, $5)`,
+        [ws, email, cid, hashToken(t), inviter],
+      ),
+    );
+    return t;
+  }
+  const projectStatus = async (id) =>
+    (await db.query(`select status from public.projects where id = $1`, [id])).rows[0].status;
+  const requestApproval = (uid, asset, title = "Cut for sign-off", message = null, due = null) =>
+    as(
+      uid,
+      async (tx) =>
+        (await tx.query(`select public.request_approval($1, $2, $3, $4) as id`, [asset, title, message, due])).rows[0]
+          .id,
+    );
+  const decide = (uid, approval, decision, note = null) =>
+    as(uid, (tx) => tx.query(`select public.decide_approval($1, $2, $3)`, [approval, decision, note]));
+
+  console.log("\nPhase 4 · Client portal access (D2)");
+  let portalClient, pP, pHidden;
+  await test("managers invite client users; team invitations stay admin-only", async () => {
+    portalClient = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.clients (workspace_id, name, company, notes, created_by)
+             values ($1, 'Pat', 'Portal Co', 'Agency-only: slow payer', $2) returning id`,
+            [wsA, carol],
+          )
+        ).rows[0].id,
+    );
+    const t = await clientInvite(carol, wsA, "gina@portal.test", portalClient);
+    await as(gina, (tx) => tx.query(`select public.accept_invitation($1)`, [t]));
+    const t2 = await clientInvite(carol, wsA, "helen@portal.test", portalClient);
+    await as(helen, (tx) => tx.query(`select public.accept_invitation($1)`, [t2]));
+    const { rows } = await db.query(
+      `select role, client_id from public.workspace_members where workspace_id = $1 and user_id in ($2, $3)`,
+      [wsA, gina, helen],
+    );
+    assert.deepEqual(
+      rows.map((r) => [r.role, r.client_id]),
+      [
+        ["client", portalClient],
+        ["client", portalClient],
+      ],
+    );
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.workspace_invitations (workspace_id, email, role, token_hash, invited_by)
+           values ($1, 'x@agency-a.test', 'member', $2, $3)`,
+          [wsA, hashToken(newToken()), carol],
+        ),
+      ),
+      /row-level security/,
+    );
+    await rejects(clientInvite(erin, wsA, "y@portal.test", portalClient), /row-level security/);
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.workspace_invitations (workspace_id, email, role, client_id, token_hash, invited_by)
+           values ($1, 'z@portal.test', 'client', $2, $3, $4)`,
+          [wsA, portalClient, hashToken(newToken()), alice],
+        ),
+      ),
+      /row-level security/,
+    );
+  });
+
+  await test("managers see and revoke client invitations only", async () => {
+    await clientInvite(carol, wsA, "pending@portal.test", portalClient);
+    await as(alice, (tx) =>
+      tx.query(
+        `insert into public.workspace_invitations (workspace_id, email, role, token_hash, invited_by)
+         values ($1, 'teammate@agency-a.test', 'member', $2, $3)`,
+        [wsA, hashToken(newToken()), alice],
+      ),
+    );
+    const seen = await as(
+      carol,
+      async (tx) => (await tx.query(`select role from public.workspace_invitations where accepted_at is null`)).rows,
+    );
+    assert.ok(seen.length > 0 && seen.every((r) => r.role === "client"));
+    const teamDel = await as(carol, (tx) =>
+      tx.query(`delete from public.workspace_invitations where email = 'teammate@agency-a.test'`),
+    );
+    assert.equal(teamDel.affectedRows, 0);
+    const del = await as(carol, (tx) =>
+      tx.query(`delete from public.workspace_invitations where email = 'pending@portal.test'`),
+    );
+    assert.equal(del.affectedRows, 1);
+    const memberSees = await as(
+      erin,
+      async (tx) => (await tx.query(`select id from public.workspace_invitations`)).rows,
+    );
+    assert.equal(memberSees.length, 0);
+    await as(alice, (tx) =>
+      tx.query(`delete from public.workspace_invitations where email = 'teammate@agency-a.test'`),
+    );
+  });
+
+  await test("managers remove client users but not staff; members cannot remove anyone", async () => {
+    const staff = await as(carol, (tx) =>
+      tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, erin]),
+    );
+    assert.equal(staff.affectedRows, 0);
+    const byMember = await as(erin, (tx) =>
+      tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, helen]),
+    );
+    assert.equal(byMember.affectedRows, 0);
+    const outsider = await as(bob, (tx) =>
+      tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, helen]),
+    );
+    assert.equal(outsider.affectedRows, 0);
+  });
+
+  console.log("\nPhase 4 · Portal reads (G1)");
+  await test("portal_projects returns safe fields for the client's visible projects only", async () => {
+    pP = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.projects (workspace_id, client_id, name, description, budget_cents, client_visible,
+                                          client_summary, start_date, due_date, created_by)
+             values ($1, $2, 'Portal film', 'Internal brief: margin is thin', 990000, true,
+                     'Your 30-second launch film', '2026-10-01', '2026-12-01', $3) returning id`,
+            [wsA, portalClient, carol],
+          )
+        ).rows[0].id,
+    );
+    pHidden = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.projects (workspace_id, client_id, name, created_by)
+             values ($1, $2, 'Not shared yet', $3) returning id`,
+            [wsA, portalClient, carol],
+          )
+        ).rows[0].id,
+    );
+    const rows = await as(gina, async (tx) => (await tx.query(`select * from public.portal_projects($1)`, [wsA])).rows);
+    assert.deepEqual(
+      rows.map((r) => r.id),
+      [pP],
+    );
+    const r = rows[0];
+    assert.deepEqual(Object.keys(r).sort(), [
+      "allow_client_downloads",
+      "client_name",
+      "client_summary",
+      "due_date",
+      "id",
+      "name",
+      "pending_approvals",
+      "shared_files",
+      "start_date",
+      "status",
+      "updated_at",
+    ]);
+    assert.equal(r.client_name, "Portal Co");
+    assert.equal(r.client_summary, "Your 30-second launch film");
+    assert.equal(r.allow_client_downloads, true);
+    assert.equal(r.pending_approvals, 0);
+    assert.equal(r.shared_files, 0);
+  });
+
+  await test("portal_project returns one visible project; nothing for other clients, staff or outsiders", async () => {
+    const one = await as(gina, async (tx) => (await tx.query(`select * from public.portal_project($1)`, [pP])).rows);
+    assert.equal(one.length, 1);
+    assert.equal(one[0].workspace_id, wsA);
+    assert.ok(!("budget_cents" in one[0]) && !("description" in one[0]));
+    for (const [uid, project] of [
+      [gina, pHidden],
+      [dana, pP],
+      [alice, pP],
+      [bob, pP],
+    ]) {
+      const rows = await as(
+        uid,
+        async (tx) => (await tx.query(`select id from public.portal_project($1)`, [project])).rows,
+      );
+      assert.equal(rows.length, 0);
+    }
+    const danaList = await as(
+      dana,
+      async (tx) => (await tx.query(`select id from public.portal_projects($1)`, [wsA])).rows,
+    );
+    assert.ok(!danaList.some((r) => r.id === pP));
+    const outsider = await as(
+      bob,
+      async (tx) => (await tx.query(`select id from public.portal_projects($1)`, [wsA])).rows,
+    );
+    assert.equal(outsider.length, 0);
+    await rejects(
+      as(null, (tx) => tx.query(`select * from public.portal_projects($1)`, [wsA])),
+      /permission denied/,
+    );
+  });
+
+  await test("clients cannot read budgets, briefs or the agency's client notes directly", async () => {
+    const projects = await as(
+      gina,
+      async (tx) => (await tx.query(`select budget_cents, description from public.projects`)).rows,
+    );
+    assert.equal(projects.length, 0);
+    const clients = await as(gina, async (tx) => (await tx.query(`select notes from public.clients`)).rows);
+    assert.equal(clients.length, 0);
+    const staff = await as(
+      erin,
+      async (tx) => (await tx.query(`select notes from public.clients where id = $1`, [portalClient])).rows,
+    );
+    assert.equal(staff[0].notes, "Agency-only: slow payer");
+  });
+
+  await test("client_summary is limited and allow_client_downloads defaults to true", async () => {
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(`update public.projects set client_summary = $1 where id = $2`, ["x".repeat(2001), pP]),
+      ),
+      /check constraint/,
+    );
+    const { rows } = await db.query(`select allow_client_downloads from public.projects where id = $1`, [pHidden]);
+    assert.equal(rows[0].allow_client_downloads, true);
+  });
+
+  console.log("\nPhase 4 · Approval requests (G2, G3, D4, D5)");
+  let fileA, fileB, apA;
+  await test("an approval needs a ready, shared version of a portal-visible project", async () => {
+    ({ id: fileA } = await uploadAsset(carol, wsA, pP, { file: "portal-v1.mp4", duration: 20 }));
+    const { id: unready } = await uploadAsset(carol, wsA, pP, { file: "pending.mp4", finalize: false });
+    const { id: otherProjectFile } = await uploadAsset(carol, wsA, projectId, { file: "other.mp4", duration: 5 });
+    const { id: hiddenFile } = await uploadAsset(carol, wsA, pHidden, { file: "hidden.mp4", duration: 5 });
+    const insert = (asset, project = pP, extra = "") =>
+      as(erin, (tx) =>
+        tx.query(
+          `insert into public.approvals (workspace_id, project_id, asset_id, title, requested_by${extra ? ", status" : ""})
+           values ($1, $2, $3, 'Sign-off', $4${extra ? ", " + extra : ""})`,
+          [wsA, project, asset, erin],
+        ),
+      );
+    await rejects(insert(fileA), /Share this version with the client/);
+    await rejects(insert(null), /Choose the version/);
+    await rejects(insert(otherProjectFile), /must belong to this project/);
+    await rejects(insert(unready), /Only uploaded files/);
+    await as(carol, (tx) => tx.query(`update public.assets set shared_with_client = true where id = $1`, [hiddenFile]));
+    await rejects(insert(hiddenFile, pHidden), /Show the project in the client portal/);
+    await rejects(requestApproval(erin, unready), /Only uploaded files/);
+  });
+
+  await test("request_approval shares the version, moves the project into review and notifies the client's users", async () => {
+    assert.equal(await projectStatus(pP), "planning");
+    apA = await requestApproval(erin, fileA, "  Launch cut v1  ", "Please review by Friday", "2099-01-01");
+    const { rows } = await db.query(
+      `select a.shared_with_client, ap.title, ap.message, ap.status, ap.requested_by
+       from public.approvals ap join public.assets a on a.id = ap.asset_id where ap.id = $1`,
+      [apA],
+    );
+    assert.equal(rows[0].shared_with_client, true);
+    assert.equal(rows[0].title, "Launch cut v1");
+    assert.equal(rows[0].status, "pending");
+    assert.equal(rows[0].requested_by, erin);
+    assert.equal(await projectStatus(pP), "in_review");
+    for (const uid of [gina, helen]) {
+      const notes = await as(
+        uid,
+        async (tx) => (await tx.query(`select type, title, body, link, actor_id from public.notifications`)).rows,
+      );
+      assert.deepEqual(notes, [
+        {
+          type: "approval.requested",
+          title: "Approval requested: Launch cut v1",
+          body: "Please review by Friday",
+          link: `/portal/projects/${pP}/files/${fileA}`,
+          actor_id: erin,
+        },
+      ]);
+    }
+    const danaNotes = await as(
+      dana,
+      async (tx) =>
+        (await tx.query(`select id from public.notifications where link like $1`, [`/portal/projects/${pP}/%`])).rows,
+    );
+    assert.equal(danaNotes.length, 0);
+    const logs = await activity(wsA, "approval.requested");
+    assert.equal(logs.at(-1).actor_id, erin);
+    assert.deepEqual(logs.at(-1).metadata, { title: "Launch cut v1", project_id: pP, asset_id: fileA });
+    const portal = await as(
+      gina,
+      async (tx) => (await tx.query(`select * from public.portal_projects($1)`, [wsA])).rows,
+    );
+    assert.equal(portal[0].pending_approvals, 1);
+    assert.equal(portal[0].shared_files, 1);
+    assert.equal(portal[0].status, "in_review");
+  });
+
+  await test("request_approval validates input and access", async () => {
+    await rejects(requestApproval(erin, fileA, "   "), /Give the approval a title/);
+    await rejects(requestApproval(erin, fileA, "Late", null, "2000-01-01"), /can't be in the past/);
+    await rejects(requestApproval(gina, fileA), /File not found/);
+    await rejects(requestApproval(bob, fileA), /File not found/);
+    await rejects(
+      as(null, (tx) => tx.query(`select public.request_approval($1, 'x')`, [fileA])),
+      /permission denied/,
+    );
+  });
+
+  await test("only one pending approval per version", async () => {
+    await rejects(requestApproval(carol, fileA, "Again"), /already has a pending approval/);
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.approvals (workspace_id, project_id, asset_id, title, requested_by) values ($1, $2, $3, 'Dup', $4)`,
+          [wsA, pP, fileA, carol],
+        ),
+      ),
+      /approvals_one_pending_per_asset/,
+    );
+  });
+
+  await test("a version or project under approval cannot be hidden from the client", async () => {
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.assets set shared_with_client = false where id = $1`, [fileA])),
+      /Cancel the pending approval/,
+    );
+    for (const set of ["client_visible = false", "archived_at = now()", "client_id = null"]) {
+      await rejects(
+        as(carol, (tx) => tx.query(`update public.projects set ${set} where id = $1`, [pP])),
+        /Cancel the pending approvals/,
+      );
+    }
+    await rejects(
+      as(carol, (tx) => tx.query(`delete from public.clients where id = $1`, [portalClient])),
+      /Cancel the pending approvals/,
+    );
+    await as(carol, (tx) => tx.query(`update public.projects set name = 'Portal film (final)' where id = $1`, [pP]));
+  });
+
+  await test("approvals cannot be decided, re-targeted or forged by direct updates", async () => {
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.approvals set status = 'approved' where id = $1`, [apA])),
+      /decided through the approval workflow/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.approvals set decision_note = 'ok' where id = $1`, [apA])),
+      /recorded by the approval workflow/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.approvals set decided_by = $2 where id = $1`, [apA, gina])),
+      /recorded by the approval workflow/,
+    );
+    ({ id: fileB } = await uploadAsset(carol, wsA, pP, { file: "portal-alt.mp4", duration: 20 }));
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.approvals set asset_id = $2 where id = $1`, [apA, fileB])),
+      /cannot be changed/,
+    );
+    // The old session flag grants nothing here: only decide_approval() decides.
+    await rejects(
+      as(carol, async (tx) => {
+        await tx.query(`select set_config('creativeflow.trusted_rpc', 'on', true)`);
+        await tx.query(`update public.approvals set status = 'approved' where id = $1`, [apA]);
+      }),
+      /decided through the approval workflow/,
+    );
+    const flag = await as(gina, async (tx) => (await tx.query(`select private.in_approval_workflow() as f`)).rows[0].f);
+    assert.equal(flag, false);
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.approvals (workspace_id, project_id, asset_id, title, requested_by, status) values ($1, $2, $3, 'x', $4, 'approved')`,
+          [wsA, pP, fileB, carol],
+        ),
+      ),
+      /row-level security|must be pending/,
+    );
+    const rows = await as(
+      gina,
+      async (tx) =>
+        (await tx.query(`update public.approvals set title = 'hacked' where id = $1 returning id`, [apA])).rows,
+    );
+    assert.equal(rows.length, 0);
+  });
+
+  await test("clients see approvals only for versions they can see", async () => {
+    const seen = await as(gina, async (tx) => (await tx.query(`select id from public.approvals`)).rows);
+    assert.deepEqual(
+      seen.map((r) => r.id),
+      [apA],
+    );
+    const other = await as(
+      dana,
+      async (tx) => (await tx.query(`select id from public.approvals where id = $1`, [apA])).rows,
+    );
+    assert.equal(other.length, 0);
+    const outsider = await as(bob, async (tx) => (await tx.query(`select id from public.approvals`)).rows);
+    assert.equal(outsider.length, 0);
+  });
+
+  console.log("\nPhase 4 · Decisions & revision rounds (G2, G4, G5)");
+  await test("only the bound client (or a manager) may decide; members and other clients may not", async () => {
+    await rejects(decide(dana, apA, "approved"), /Approval not found/);
+    await rejects(decide(bob, apA, "approved"), /Approval not found/);
+    await rejects(decide(erin, apA, "approved"), /Approval not found/);
+    await rejects(decide(gina, apA, "changes_requested", "  "), /describe the requested changes/);
+    await rejects(decide(gina, apA, "changes_requested", "x".repeat(5001)), /too long/);
+    await rejects(decide(gina, apA, "cancelled"), /approved or changes_requested/);
+  });
+
+  let round1;
+  await test("changes requested opens the next revision round and moves the project to revisions", async () => {
+    await decide(gina, apA, "changes_requested", "  Brighter opening shot  ");
+    const { rows } = await db.query(
+      `select id, round_number, summary, status, asset_id, approval_id, requested_by from public.revisions where project_id = $1`,
+      [pP],
+    );
+    assert.equal(rows.length, 1);
+    round1 = rows[0].id;
+    assert.equal(rows[0].round_number, 1);
+    assert.equal(rows[0].summary, "Brighter opening shot");
+    assert.equal(rows[0].status, "open");
+    assert.equal(rows[0].asset_id, fileA);
+    assert.equal(rows[0].approval_id, apA);
+    assert.equal(rows[0].requested_by, gina);
+    assert.equal(await projectStatus(pP), "revisions");
+    const ap = (
+      await db.query(`select status, decided_by, decision_note, decided_at from public.approvals where id = $1`, [apA])
+    ).rows[0];
+    assert.equal(ap.status, "changes_requested");
+    assert.equal(ap.decided_by, gina);
+    assert.equal(ap.decision_note, "Brighter opening shot");
+    assert.ok(ap.decided_at);
+    const notes = await as(
+      erin,
+      async (tx) =>
+        (await tx.query(`select type, link, actor_id from public.notifications where type like 'approval.%'`)).rows,
+    );
+    assert.deepEqual(notes, [
+      { type: "approval.changes_requested", link: `/app/projects/${pP}/assets/${fileA}`, actor_id: gina },
+    ]);
+    const logs = await activity(wsA, "approval.changes_requested");
+    assert.deepEqual(logs.at(-1), {
+      actor_id: gina,
+      metadata: { title: "Launch cut v1", project_id: pP, asset_id: fileA },
+    });
+    assert.equal((await activity(wsA, "revision.opened")).at(-1).metadata.round, 1);
+    await rejects(decide(gina, apA, "approved"), /already been decided/);
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.approvals set status = 'cancelled' where id = $1`, [apA])),
+      /already been closed/,
+    );
+  });
+
+  await test("revision round numbers are allocated by the database", async () => {
+    const round = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.revisions (workspace_id, project_id, round_number, summary, requested_by)
+             values ($1, $2, 1, 'Internal polish pass', $3) returning round_number`,
+            [wsA, pP, carol],
+          )
+        ).rows[0].round_number,
+    );
+    assert.equal(round, 2);
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.revisions (workspace_id, project_id, approval_id, summary, requested_by) values ($1, $2, $3, 'x', $4)`,
+          [wsA, pHidden, apA, carol],
+        ),
+      ),
+      /approval must belong to this project/,
+    );
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(
+          `insert into public.revisions (workspace_id, project_id, asset_id, summary, requested_by) values ($1, $2, $3, 'x', $4)`,
+          [wsA, pHidden, fileA, carol],
+        ),
+      ),
+      /file must belong to this project/,
+    );
+  });
+
+  await test("only a revision round's status changes; completion is timestamped and logged", async () => {
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.revisions set round_number = 9 where id = $1`, [round1])),
+      /Only a revision round's status/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.revisions set summary = 'rewritten' where id = $1`, [round1])),
+      /Only a revision round's status/,
+    );
+    await as(erin, (tx) => tx.query(`update public.revisions set status = 'in_progress' where id = $1`, [round1]));
+    await as(erin, (tx) =>
+      tx.query(`update public.revisions set status = 'completed', completed_at = '2000-01-01' where id = $1`, [round1]),
+    );
+    let r = (await db.query(`select completed_at from public.revisions where id = $1`, [round1])).rows[0];
+    assert.ok(r.completed_at && new Date(r.completed_at).getFullYear() > 2000);
+    await as(erin, (tx) => tx.query(`update public.revisions set status = 'open' where id = $1`, [round1]));
+    r = (await db.query(`select completed_at from public.revisions where id = $1`, [round1])).rows[0];
+    assert.equal(r.completed_at, null);
+    await as(erin, (tx) => tx.query(`update public.revisions set status = 'completed' where id = $1`, [round1]));
+    assert.ok((await activity(wsA, "revision.in_progress")).length >= 1);
+    assert.ok((await activity(wsA, "revision.completed")).length >= 1);
+    const clientUpd = await as(gina, (tx) =>
+      tx.query(`update public.revisions set status = 'open' where id = $1`, [round1]),
+    );
+    assert.equal(clientUpd.affectedRows, 0);
+  });
+
+  let apB, apC;
+  await test("approved only marks the project approved when nothing else is outstanding", async () => {
+    apB = await requestApproval(erin, fileB, "Alt cut");
+    assert.equal(await projectStatus(pP), "in_review");
+    const { id: fileC } = await uploadAsset(carol, wsA, pP, { file: "portal-v2.mp4", duration: 20, root: fileA });
+    apC = await requestApproval(carol, fileC, "Launch cut v2");
+    await decide(gina, apB, "approved");
+    assert.equal(await projectStatus(pP), "in_review", "another approval is still pending");
+    await rejects(decide(helen, apB, "approved"), /already been decided/);
+    const r2 = (await db.query(`select id from public.revisions where project_id = $1 and round_number = 2`, [pP]))
+      .rows[0].id;
+    await decide(helen, apC, "approved", "Looks great");
+    assert.equal(await projectStatus(pP), "in_review", "revision round 2 is still open");
+    await as(carol, (tx) => tx.query(`update public.revisions set status = 'completed' where id = $1`, [r2]));
+    const apD = await requestApproval(carol, fileA, "Launch cut v1 (again)");
+    await decide(gina, apD, "approved");
+    assert.equal(await projectStatus(pP), "approved");
+    const notes = await as(
+      carol,
+      async (tx) =>
+        (
+          await tx.query(
+            `select title, body from public.notifications where type = 'approval.approved' order by created_at`,
+          )
+        ).rows,
+    );
+    assert.deepEqual(notes, [
+      { title: "Approved: Launch cut v2", body: "Looks great" },
+      { title: "Approved: Launch cut v1 (again)", body: null },
+    ]);
+    const logs = (await activity(wsA, "approval.approved")).filter((l) => l.metadata.project_id === pP);
+    assert.deepEqual(
+      logs.map((l) => l.actor_id),
+      [gina, helen, gina],
+    );
+  });
+
+  await test("decisions never override delivered, cancelled or on-hold projects", async () => {
+    const { id: f } = await uploadAsset(carol, wsA, pP, { file: "portal-final.mp4", duration: 20 });
+    const ap1 = await requestApproval(carol, f, "Final master");
+    await as(carol, (tx) => tx.query(`update public.projects set status = 'on_hold' where id = $1`, [pP]));
+    await decide(gina, ap1, "approved");
+    assert.equal(await projectStatus(pP), "on_hold");
+    await as(carol, (tx) => tx.query(`update public.projects set status = 'delivered' where id = $1`, [pP]));
+    const ap2 = await requestApproval(carol, f, "Final master (re-check)");
+    assert.equal(await projectStatus(pP), "delivered");
+    await decide(gina, ap2, "changes_requested", "One typo in the end card");
+    assert.equal(await projectStatus(pP), "delivered");
+  });
+
+  await test("cancelling records who cancelled, is logged, and frees the version", async () => {
+    const { rows } = await db.query(
+      `select id from public.assets where project_id = $1 and name = 'portal-final.mp4'`,
+      [pP],
+    );
+    const f = rows[0].id;
+    const ap = await requestApproval(erin, f, "One more look");
+    await as(erin, (tx) => tx.query(`update public.approvals set status = 'cancelled' where id = $1`, [ap]));
+    const row = (await db.query(`select status, decided_by, decided_at from public.approvals where id = $1`, [ap]))
+      .rows[0];
+    assert.equal(row.status, "cancelled");
+    assert.equal(row.decided_by, erin);
+    assert.ok(row.decided_at);
+    assert.equal((await activity(wsA, "approval.cancelled")).at(-1).actor_id, erin);
+    await rejects(decide(gina, ap, "approved"), /already been decided/);
+    await as(carol, (tx) => tx.query(`update public.assets set shared_with_client = false where id = $1`, [f]));
+    const gone = await as(
+      gina,
+      async (tx) => (await tx.query(`select id from public.approvals where id = $1`, [ap])).rows,
+    );
+    assert.equal(gone.length, 0, "unshared version hides its approvals from the client");
+  });
+
+  await test("a client cannot decide on a version that is no longer visible to them", async () => {
+    const { id: f } = await uploadAsset(carol, wsA, pP, { file: "portal-last.mp4", duration: 20 });
+    const ap = await requestApproval(carol, f, "Last look");
+    // Bypass the guard as the table owner to simulate an inconsistent state.
+    await db.exec(`alter table public.assets disable trigger assets_guard_pending_approval`);
+    await db.query(`update public.assets set shared_with_client = false where id = $1`, [f]);
+    await db.exec(`alter table public.assets enable trigger assets_guard_pending_approval`);
+    await rejects(decide(gina, ap, "approved"), /Approval not found/);
+    await decide(carol, ap, "approved");
+  });
+
+  await test("deleting a file or a user keeps approvals and revision rounds consistent", async () => {
+    const temp = await createUser("temp@portal.test", "Temp");
+    const t = await clientInvite(carol, wsA, "temp@portal.test", portalClient);
+    await as(temp, (tx) => tx.query(`select public.accept_invitation($1)`, [t]));
+    const { id: f } = await uploadAsset(carol, wsA, pP, { file: "portal-temp.mp4", duration: 20 });
+    const ap = await requestApproval(carol, f, "Temp review");
+    await decide(temp, ap, "changes_requested", "Temp feedback");
+    await db.query(`delete from auth.users where id = $1`, [temp]);
+    const row = (await db.query(`select decided_by from public.approvals where id = $1`, [ap])).rows[0];
+    assert.equal(row.decided_by, null);
+    const rev = (await db.query(`select id, requested_by from public.revisions where approval_id = $1`, [ap])).rows[0];
+    assert.equal(rev.requested_by, null);
+    await as(carol, (tx) => tx.query(`delete from public.assets where id = $1`, [f]));
+    const after = (await db.query(`select approval_id, asset_id from public.revisions where id = $1`, [rev.id]))
+      .rows[0];
+    assert.deepEqual(after, { approval_id: null, asset_id: null });
+    assert.equal((await db.query(`select count(*)::int as n from public.approvals where id = $1`, [ap])).rows[0].n, 0);
+  });
+
+  await test("managers can remove a client user's portal access", async () => {
+    const del = await as(carol, (tx) =>
+      tx.query(`delete from public.workspace_members where workspace_id = $1 and user_id = $2`, [wsA, helen]),
+    );
+    assert.equal(del.affectedRows, 1);
+    const rows = await as(
+      helen,
+      async (tx) => (await tx.query(`select id from public.portal_projects($1)`, [wsA])).rows,
+    );
+    assert.equal(rows.length, 0);
+    assert.ok((await activity(wsA, "member.removed")).length >= 1);
   });
 
   console.log("\nPhase 2 · Cleanup");

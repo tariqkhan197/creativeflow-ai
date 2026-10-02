@@ -61,6 +61,9 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 | `get_invitation(p_token)`                         | definer  | Invite page lookup: workspace, email, role, inviter, status (anon OK)  |
 | `finalize_asset_upload(p_asset, …metadata)`       | definer  | Marks an upload ready after checking the stored object's size and type |
 | `asset_upload_constraints()`                      | definer  | Bucket upload limit and allowed MIME types for the upload UI           |
+| `portal_projects(p_workspace)`                    | definer  | Client portal: safe fields of the caller's visible projects + counts   |
+| `portal_project(p_project)`                       | definer  | Client portal: one visible project, safe fields only                   |
+| `request_approval(p_asset, p_title, …)`           | invoker  | Staff: share a version and request approval in one step                |
 
 ## Access matrix (RLS)
 
@@ -68,13 +71,13 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 | ------------------------ | ----------- | ------- | ----------------- | ----------------------------------------- | --------------- |
 | Workspace settings       | edit        | read    | read              | read name                                 | ✗               |
 | Members                  | manage      | read    | read              | read staff + self                         | ✗               |
-| Invitations              | manage      | ✗       | ✗                 | ✗                                         | ✗               |
-| Clients                  | CRUD        | CRUD    | read              | own record                                | ✗               |
-| Projects                 | CRUD        | CRUD    | read/update       | `client_visible` projects of X            | ✗               |
+| Invitations              | manage      | client  | ✗                 | ✗                                         | ✗               |
+| Clients                  | CRUD        | CRUD    | read              | ✗ (name via `portal_projects`)            | ✗               |
+| Projects                 | CRUD        | CRUD    | read/update       | via `portal_projects` / `portal_project`  | ✗               |
 | Tasks                    | CRUD        | CRUD    | CRUD (own delete) | ✗                                         | ✗               |
 | Assets                   | CRUD        | CRUD    | upload/update     | shared + ready assets of visible projects | ✗               |
 | Comments                 | all         | all     | all               | non-internal; can post non-internal       | ✗               |
-| Approvals                | all         | all     | request           | read + decide via RPC                     | ✗               |
+| Approvals                | all         | all     | request/cancel    | visible versions; decide via RPC          | ✗               |
 | AI generations           | all         | all     | own               | ✗                                         | ✗               |
 | Invoices / items         | CRUD        | CRUD    | ✗                 | non-draft invoices for X                  | ✗               |
 | Payments                 | read        | read    | ✗                 | read for own invoices                     | ✗               |
@@ -95,6 +98,7 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
   with automatic table grants turned off. `npm run test:db` runs the suite in both modes.
 - `20261002000000_phase2_team_projects.sql`: Phase 2 rules, listed below.
 - `20261003000000_phase3_media_review.sql`: Phase 3 rules, listed below.
+- `20261004000000_phase4_client_portal.sql`: Phase 4 rules, listed below.
 
 ### Phase 2 database rules
 
@@ -126,3 +130,22 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 > Fixed in this migration: the initial storage read policy compared `assets.storage_path` with an unqualified
 > `name`, which resolved to `assets.name`. That made its client branch never match. It is now `objects.name`, and a
 > DB test covers client access.
+
+### Phase 4 database rules
+
+| Rule                                                                                                                                                              | Where                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Clients can't read `projects` or `clients` (budget, internal brief, the agency's notes); the portal reads safe columns through `portal_projects`/`portal_project` | policies `projects: staff read`, `clients: staff read`              |
+| New columns: `projects.client_summary` (≤ 2000, client-facing) and `projects.allow_client_downloads` (default true)                                               | table `projects`                                                    |
+| An approval targets a ready, shared version in the same project; the project must have a client, be portal-visible and not archived                               | `approvals_prepare` trigger                                         |
+| At most one pending approval per version                                                                                                                          | `approvals_one_pending_per_asset` partial unique index              |
+| Clients read approvals only for versions they can see; they decide only those                                                                                     | policy `approvals: read`, `decide_approval()`                       |
+| `approved`/`changes_requested` and the decision fields are written only by `decide_approval()` (checked by role, not a session flag); closed approvals are final  | `approvals_prepare`, `private.in_approval_workflow()`               |
+| Cancelling records who and when; project, version and requester are immutable                                                                                     | `approvals_prepare`                                                 |
+| A version or project with a pending approval can't be unshared, hidden, archived or moved to another client                                                       | `*_guard_pending_approval` triggers                                 |
+| Status automation: request → `in_review`; changes requested → `revisions` + next round; approved → `approved` when nothing is pending and all rounds are complete | `approvals_after_change`, `decide_approval()`                       |
+| Delivered, cancelled (and, for approval, on-hold) projects are never moved by decisions                                                                           | `decide_approval()`                                                 |
+| Revision round numbers are allocated under a project row lock; only a round's status changes; `completed_at` is set by the database                               | `revisions_prepare` trigger                                         |
+| Client portal users get an in-app notification when approval is requested                                                                                         | `approvals_after_change`                                            |
+| Activity: `approval.requested/approved/changes_requested/cancelled`, `revision.opened/in_progress/completed/…`                                                    | `approvals_after_change`, `decide_approval()`, `revisions_audit`    |
+| Managers may invite, see and revoke client-role invitations and remove client-role members; team invitations stay owner/admin-only                                | `invitations: managers …`, `members: managers remove client access` |

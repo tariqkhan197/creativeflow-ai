@@ -97,9 +97,32 @@ export type Project = {
   budget_cents: number | null;
   currency: string;
   client_visible: boolean;
+  /** Client-facing description shown in the portal (the internal brief is `description`). */
+  client_summary: string | null;
+  allow_client_downloads: boolean;
   created_by: string | null;
   archived_at: string | null;
 } & Timestamps;
+
+/** Safe project fields a client user sees (`portal_projects()`); no budget or internal brief. */
+export type PortalProjectSummary = {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  start_date: string | null;
+  due_date: string | null;
+  client_summary: string | null;
+  client_name: string;
+  allow_client_downloads: boolean;
+  pending_approvals: number;
+  shared_files: number;
+  updated_at: string;
+};
+
+/** One project as a client user sees it (`portal_project()`). */
+export type PortalProject = Omit<PortalProjectSummary, "pending_approvals" | "shared_files"> & {
+  workspace_id: string;
+};
 
 export type ProjectMember = {
   project_id: string;
@@ -377,6 +400,12 @@ export type Database = {
         Returns: { status: "ready"; already?: boolean; thumbnail?: boolean };
       };
       asset_upload_constraints: { Args: Record<string, never>; Returns: AssetUploadConstraints | null };
+      portal_projects: { Args: { p_workspace: string }; Returns: PortalProjectSummary[] };
+      portal_project: { Args: { p_project: string }; Returns: PortalProject[] };
+      request_approval: {
+        Args: { p_asset: string; p_title: string; p_message?: string | null; p_due_date?: string | null };
+        Returns: string;
+      };
     };
     Enums: {
       workspace_role: WorkspaceRole;

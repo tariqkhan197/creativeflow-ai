@@ -269,12 +269,9 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
 
 async function ClientHome({ workspace }: { workspace: WorkspaceWithRole }) {
   const supabase = await createClient();
-  // RLS limits this to client-visible projects of the client this user is bound to.
-  const { data: projects, error } = await supabase
-    .from("projects")
-    .select("id, name, status, due_date, updated_at")
-    .eq("workspace_id", workspace.id)
-    .order("updated_at", { ascending: false });
+  // Clients can't read `projects` directly (it holds the budget and internal brief). This
+  // returns the safe fields of the client-visible projects of the client this user is bound to.
+  const { data: projects, error } = await supabase.rpc("portal_projects", { p_workspace: workspace.id });
 
   if (error) throw new Error(`Could not load projects: ${error.message}`);
 
