@@ -44,6 +44,10 @@ type PanelProps = {
   people: Person[];
   currentUserId: string;
   canManage: boolean;
+  /** Client portal: no internal notes and no resolving (also enforced by the server and RLS). */
+  clientMode?: boolean;
+  /** Name shown for authors whose profile the viewer can't see. */
+  unknownName?: string;
   activeId: string | null;
   live: LiveStatus;
   // composer
@@ -66,11 +70,12 @@ export const CommentsPanel = forwardRef<HTMLTextAreaElement, PanelProps>(functio
   const [withTime, setWithTime] = useState(timed);
   const [isInternal, setIsInternal] = useState(false);
   const [pending, startTransition] = useTransition();
-  const nameOf = (id: string | null) => props.people.find((p) => p.id === id)?.name ?? "Former member";
+  const nameOf = (id: string | null) =>
+    props.people.find((p) => p.id === id)?.name ?? props.unknownName ?? "Former member";
 
   const submit = () =>
     startTransition(async () => {
-      if (await props.onSubmit({ body, withTime: timed && withTime, isInternal })) {
+      if (await props.onSubmit({ body, withTime: timed && withTime, isInternal: !props.clientMode && isInternal })) {
         setBody("");
         setIsInternal(false);
       }
@@ -178,15 +183,17 @@ export const CommentsPanel = forwardRef<HTMLTextAreaElement, PanelProps>(functio
               </button>
             )
           ) : null}
-          <label className="inline-flex cursor-pointer items-center gap-1 text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={isInternal}
-              onChange={(e) => setIsInternal(e.target.checked)}
-              className="accent-[var(--brand)]"
-            />
-            <LockIcon className="size-3" /> Internal note
-          </label>
+          {props.clientMode ? null : (
+            <label className="inline-flex cursor-pointer items-center gap-1 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={isInternal}
+                onChange={(e) => setIsInternal(e.target.checked)}
+                className="accent-[var(--brand)]"
+              />
+              <LockIcon className="size-3" /> Internal note
+            </label>
+          )}
           <span className="ml-auto text-muted-foreground tabular-nums">
             {body.length > COMMENT_MAX_LENGTH - 500 ? `${body.length}/${COMMENT_MAX_LENGTH}` : null}
           </span>
@@ -220,6 +227,7 @@ function ThreadItem({
   nameOf,
   currentUserId,
   canManage,
+  clientMode,
   activeId,
   onSeek,
   onChange,
@@ -314,9 +322,11 @@ function ThreadItem({
           <Button variant="ghost" size="sm" onClick={() => setReplying(true)}>
             <CornerDownRightIcon /> Reply
           </Button>
-          <Button variant="ghost" size="sm" onClick={toggleResolved} disabled={pending}>
-            {resolved ? <RotateCcwIcon /> : <CheckIcon />} {resolved ? "Reopen" : "Resolve"}
-          </Button>
+          {clientMode ? null : (
+            <Button variant="ghost" size="sm" onClick={toggleResolved} disabled={pending}>
+              {resolved ? <RotateCcwIcon /> : <CheckIcon />} {resolved ? "Reopen" : "Resolve"}
+            </Button>
+          )}
         </div>
       )}
     </li>

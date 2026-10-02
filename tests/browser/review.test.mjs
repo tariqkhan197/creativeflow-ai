@@ -38,6 +38,7 @@ await build({
   alias: {
     "@/lib/actions/assets": path.join(import.meta.dirname, "stub-asset-actions.ts"),
     "@/lib/actions/comments": path.join(import.meta.dirname, "stub-comment-actions.ts"),
+    "@/lib/actions/approvals": path.join(import.meta.dirname, "stub-approval-actions.ts"),
     "@/lib/supabase/client": path.join(import.meta.dirname, "stub-supabase-client.ts"),
   },
   define: { "process.env.NODE_ENV": '"development"' },
@@ -395,6 +396,81 @@ const makeWebm = `(async () => {
   await page.click('[role="alertdialog"] button:has-text("Delete")');
   await page.waitForSelector("text=No open comments.");
   check("deleting a thread removes it and its replies", (await page.locator("text=On it").count()) === 0);
+  await page.close();
+}
+
+// Client portal mode (Phase 4): no internal notes or resolving, downloads only when
+// the server issued a download link, and the decision panel.
+{
+  const page = await fresh();
+  const src = await page.evaluate(makeWebm);
+  await page.evaluate((s) => window.mountClientWorkspace(s, "video", "video/webm", 2, null), src);
+  await page.waitForFunction(() => document.querySelector("video")?.readyState >= 1, null, { timeout: 10000 });
+  check("client mode hides the internal-note option", (await page.locator("text=Internal note").count()) === 0);
+  await page.fill('textarea[aria-label="New comment"]', "Can the logo be bigger?");
+  await page.click('button:has-text("Post")');
+  await page.waitForSelector("text=Can the logo be bigger?");
+  check("a client can post a comment", (await page.locator("text=Can the logo be bigger?").count()) === 1);
+  check(
+    "client mode has no Resolve button",
+    (await page.getByRole("button", { name: "Resolve", exact: true }).count()) === 0 &&
+      (await page.getByRole("button", { name: "Reply", exact: true }).count()) === 1,
+  );
+  check(
+    "client comments are never sent as internal",
+    await page.evaluate(() => [...window.__comments.values()].every((c) => !c.is_internal)),
+  );
+
+  await page.click('button:has-text("Request changes")');
+  await page.click('button:has-text("Send change request")');
+  await page.waitForSelector("text=Please describe the requested changes");
+  check("requesting changes needs a note", (await page.evaluate(() => (window.__decisions ?? []).length)) === 0);
+  await page.fill('textarea[name="note"]', "Brighter opening shot");
+  await page.click('button:has-text("Send change request")');
+  await page.waitForSelector("text=Changes requested. The team has been notified.");
+  check(
+    "the change request is sent with its note",
+    await page.evaluate(
+      () =>
+        window.__decisions?.[0]?.decision === "changes_requested" &&
+        window.__decisions[0].note === "Brighter opening shot",
+    ),
+  );
+  await page.close();
+}
+const undecodable = () =>
+  URL.createObjectURL(new Blob([new Uint8Array(4096).map((_, i) => i % 251)], { type: "video/x-msvideo" }));
+{
+  const page = await fresh();
+  const bad = await page.evaluate(undecodable);
+  await page.evaluate((s) => {
+    window.__currentSrc = s;
+    window.__downloadsOff = true;
+    window.mountClientWorkspace(s, "video", "video/x-msvideo", 2, null);
+  }, bad);
+  await page.waitForSelector("text=This format cannot be previewed in the browser.", { timeout: 10000 });
+  check(
+    "no download button when downloads are off (also after the link refresh)",
+    (await page.locator("text=Download").count()) === 0 && (await page.evaluate(() => window.__refreshes)) >= 1,
+  );
+  await page.close();
+}
+{
+  const page = await fresh();
+  const bad = await page.evaluate(undecodable);
+  await page.evaluate((s) => {
+    window.__currentSrc = s;
+    window.mountClientWorkspace(s, "video", "video/x-msvideo", 2, s);
+  }, bad);
+  await page.waitForSelector("text=Download to view", { timeout: 10000 });
+  check(
+    "download offered when the server issued a download link",
+    (await page.locator('a:has-text("Download")').count()) === 1,
+  );
+  await page.click('button:has-text("Approve")');
+  await page.click('button:has-text("Confirm approval")');
+  await page.waitForSelector("text=Approved. The team has been notified.");
+  check("approving without a note works", await page.evaluate(() => window.__decisions?.[0]?.decision === "approved"));
   await page.close();
 }
 

@@ -32,6 +32,9 @@ export function ReviewWorkspace({
   people,
   currentUserId,
   canManage,
+  clientMode = false,
+  unknownName,
+  asideTop,
   side,
 }: {
   asset: ViewerAsset;
@@ -40,6 +43,12 @@ export function ReviewWorkspace({
   people: Person[];
   currentUserId: string;
   canManage: boolean;
+  /** Client portal review: hides internal notes and resolving. */
+  clientMode?: boolean;
+  /** Name shown for comment authors whose profile the viewer can't see. */
+  unknownName?: string;
+  /** Rendered above the comments panel (e.g. the client's decision panel). */
+  asideTop?: React.ReactNode;
   side: React.ReactNode;
 }) {
   const viewer = useRef<ViewerHandle>(null);
@@ -143,6 +152,7 @@ export function ReviewWorkspace({
         onRequestComment={() => composer.current?.focus()}
       />
       <aside className="grid content-start gap-4">
+        {asideTop}
         <CommentsPanel
           ref={composer}
           kind={asset.kind}
@@ -153,6 +163,8 @@ export function ReviewWorkspace({
           people={people}
           currentUserId={currentUserId}
           canManage={canManage}
+          clientMode={clientMode}
+          unknownName={unknownName}
           activeId={activeId}
           live={live}
           currentTime={time}

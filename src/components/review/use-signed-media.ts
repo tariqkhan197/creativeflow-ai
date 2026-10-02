@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getAssetMediaUrls } from "@/lib/actions/assets";
 import { refreshDelay } from "@/lib/media/url-refresh";
 
-export type SignedMedia = { url: string; downloadUrl: string; expiresAt: number };
+/** `downloadUrl` is null when downloads aren't allowed (client portal, D6). */
+export type SignedMedia = { url: string; downloadUrl: string | null; expiresAt: number };
 
 /**
  * Keeps a signed media URL fresh: renews it before expiry, and on demand

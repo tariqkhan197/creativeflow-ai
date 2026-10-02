@@ -27,7 +27,8 @@ type Problem = "unsupported" | "unavailable" | null;
 /**
  * Picks the right viewer for the asset, keeps its signed URL fresh, and shows
  * honest states when the browser can't preview the format or the file can't
- * be loaded. Download always uses a fresh signed URL.
+ * be loaded. Download always uses a fresh signed URL, and is hidden when the
+ * server issued none (downloads turned off for the client).
  */
 export function ReviewViewer({
   ref,
@@ -83,7 +84,7 @@ export function ReviewViewer({
     [media, refresh],
   );
 
-  const download = media ? (
+  const download = media?.downloadUrl ? (
     <Button asChild variant="outline" size="sm">
       <a href={media.downloadUrl} rel="noopener">
         <DownloadIcon /> Download
@@ -109,7 +110,11 @@ export function ReviewViewer({
     return (
       <Notice
         icon={<FileTextIcon className="size-6" />}
-        title="This format cannot be previewed in the browser. Download to view."
+        title={
+          download
+            ? "This format cannot be previewed in the browser. Download to view."
+            : "This format cannot be previewed in the browser."
+        }
         body={`${asset.name} (${asset.mime_type}) is stored safely. Comments still work below.`}
       >
         {download}

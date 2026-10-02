@@ -325,7 +325,7 @@ export async function renameAsset(input: { assetId: string; name: string }): Pro
 }
 
 export type MediaUrls =
-  { ok: true; url: string; downloadUrl: string; expiresAt: number } | { ok: false; error: string };
+  { ok: true; url: string; downloadUrl: string | null; expiresAt: number } | { ok: false; error: string };
 
 /**
  * Short-lived signed URLs for viewing and downloading one asset, issued only
@@ -338,24 +338,35 @@ export async function getAssetMediaUrls(assetId: string): Promise<MediaUrls> {
   const supabase = await createClient();
   const { data: asset } = await supabase
     .from("assets")
-    .select("storage_path, name, status")
+    .select("storage_path, name, status, project_id")
     .eq("id", parsed.data.assetId)
     .eq("workspace_id", active.id)
     .maybeSingle();
   if (!asset || asset.status !== "ready") return { ok: false, error: "This file isn't available." };
 
+  // D6: the team can turn off downloads for the client. Clients can't read the projects
+  // table, so the setting comes from portal_project(), which also re-checks visibility.
+  let allowDownload = true;
+  if (!isStaff(active.role)) {
+    const { data: project } = await supabase.rpc("portal_project", { p_project: asset.project_id });
+    if (!project?.length) return { ok: false, error: "This file isn't available." };
+    allowDownload = project[0].allow_client_downloads;
+  }
+
   const bucket = supabase.storage.from(ASSET_BUCKET);
   const [view, download] = await Promise.all([
     bucket.createSignedUrl(asset.storage_path, SIGNED_URL_TTL_SECONDS),
-    bucket.createSignedUrl(asset.storage_path, SIGNED_URL_TTL_SECONDS, { download: asset.name }),
+    allowDownload
+      ? bucket.createSignedUrl(asset.storage_path, SIGNED_URL_TTL_SECONDS, { download: asset.name })
+      : Promise.resolve(null),
   ]);
-  if (view.error || download.error || !view.data || !download.data) {
+  if (view.error || !view.data || (download && (download.error || !download.data))) {
     return { ok: false, error: "A secure link to this file couldn't be created. Please try again." };
   }
   return {
     ok: true,
     url: view.data.signedUrl,
-    downloadUrl: download.data.signedUrl,
+    downloadUrl: download?.data?.signedUrl ?? null,
     expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000,
   };
 }

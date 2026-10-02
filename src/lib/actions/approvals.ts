@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   approvalIdSchema,
   assetShareSchema,
+  decideApprovalSchema,
   projectPortalSchema,
   requestApprovalSchema,
   revisionStatusSchema,
@@ -172,4 +173,52 @@ export async function setRevisionStatus(revisionId: string, status: string): Pro
 
   revalidateApprovals(data[0].project_id);
   return { ok: true, message: "Revision round updated." };
+}
+
+/**
+ * Approve or request changes. Client users decide for their own client's
+ * visible versions; owners, admins and managers may record a decision on the
+ * client's behalf. decide_approval() re-checks all of this in the database.
+ */
+export async function decideApproval(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { active } = await getWorkspaceContext();
+  const values = echoValues(formData);
+  if (active.role !== "client" && !canManageWork(active.role)) {
+    return { status: "error", message: "Only the client (or a manager) can decide on an approval.", values };
+  }
+  const parsed = decideApprovalSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { status: "error", fieldErrors: fieldErrorsFrom(parsed.error), values };
+  const d = parsed.data;
+
+  const supabase = await createClient();
+  const { data: approval } = await supabase
+    .from("approvals")
+    .select("id, project_id, asset_id")
+    .eq("id", d.approvalId)
+    .eq("workspace_id", active.id)
+    .maybeSingle();
+  if (!approval) return { status: "error", message: "This approval request no longer exists.", values };
+
+  const { error } = await supabase.rpc("decide_approval", {
+    p_approval: approval.id,
+    p_decision: d.decision,
+    p_note: d.note ?? null,
+  });
+  if (error) {
+    return {
+      status: "error",
+      message: dbErrorMessage(error, "Could not record your decision. Please try again."),
+      values,
+    };
+  }
+
+  revalidateApprovals(approval.project_id, approval.asset_id);
+  if (approval.asset_id) revalidatePath(`/portal/projects/${approval.project_id}/files/${approval.asset_id}`);
+  return {
+    status: "success",
+    message:
+      d.decision === "approved"
+        ? "Approved. The team has been notified."
+        : "Changes requested. The team has been notified.",
+  };
 }
