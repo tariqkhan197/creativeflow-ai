@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { z } from "zod";
 import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, Trash2Icon } from "lucide-react";
+import { ProjectApprovals } from "@/components/approvals/project-approvals";
 import { ConfirmAction } from "@/components/app/confirm-action";
 import { ProjectFiles } from "@/components/assets/project-files";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -170,6 +171,21 @@ export default async function ProjectPage({ params }: PageProps<"/app/projects/[
           </CardContent>
         </Card>
       </div>
+
+      <section className="grid gap-3" aria-labelledby="approvals-heading">
+        <h2 id="approvals-heading" className="text-lg font-semibold tracking-tight">
+          Client portal &amp; approvals
+        </h2>
+        <Suspense fallback={<Skeleton className="h-48 rounded-xl" />}>
+          <ProjectApprovals
+            project={p}
+            clientName={client?.name ?? null}
+            people={people}
+            currentUserId={user.id}
+            canManage={canManage}
+          />
+        </Suspense>
+      </section>
 
       <section className="grid gap-3" aria-labelledby="files-heading">
         <h2 id="files-heading" className="text-lg font-semibold tracking-tight">

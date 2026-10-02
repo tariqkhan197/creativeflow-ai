@@ -19,7 +19,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatRelativeTime } from "@/lib/utils";
 
 const COLUMNS =
-  "id, name, kind, status, mime_type, size_bytes, duration_seconds, version_number, root_asset_id, thumbnail_path, uploaded_by, upload_error, created_at";
+  "id, name, kind, status, mime_type, size_bytes, duration_seconds, version_number, root_asset_id, thumbnail_path, uploaded_by, upload_error, created_at, shared_with_client";
 
 export async function ProjectFiles({
   projectId,
@@ -37,10 +37,16 @@ export async function ProjectFiles({
   canManage: boolean;
 }) {
   const supabase = await createClient();
-  const [{ data: rows, error }, { data: summary }, limit] = await Promise.all([
+  const [{ data: rows, error }, { data: summary }, limit, { data: pendingApprovals }] = await Promise.all([
     supabase.from("assets").select(COLUMNS).eq("project_id", projectId).eq("workspace_id", workspaceId),
     supabase.from("asset_review_summary").select("root_asset_id, open_comment_count").eq("project_id", projectId),
     getUploadLimit(supabase),
+    supabase
+      .from("approvals")
+      .select("asset_id")
+      .eq("project_id", projectId)
+      .eq("workspace_id", workspaceId)
+      .eq("status", "pending"),
   ]);
 
   if (error) {
@@ -67,6 +73,10 @@ export async function ProjectFiles({
       .filter((r) => r.id === rootId || r.root_asset_id === rootId)
       .every((r) => r.uploaded_by === userId);
   const nameOf = (id: string | null) => people.find((p) => p.id === id)?.name ?? "A teammate";
+  const sharedIds = new Set(
+    (rows as (AssetListRow & { shared_with_client: boolean })[]).filter((r) => r.shared_with_client).map((r) => r.id),
+  );
+  const pendingIds = new Set((pendingApprovals ?? []).map((a) => a.asset_id));
 
   return (
     <UploadQueueProvider projectId={projectId} limitBytes={limit.bytes}>
@@ -178,6 +188,11 @@ export async function ProjectFiles({
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <Badge variant={versions.length > 1 ? "brand" : "secondary"}>v{latest.version_number}</Badge>
+                      {versions.some((v) => pendingIds.has(v.id)) ? (
+                        <Badge variant="warning">Awaiting approval</Badge>
+                      ) : sharedIds.has(latest.id) ? (
+                        <Badge variant="outline">Shared</Badge>
+                      ) : null}
                       <span>{formatBytes(latest.size_bytes)}</span>
                       <span>· {formatRelativeTime(latest.created_at)}</span>
                       <span className="ml-auto inline-flex items-center gap-1" title={`${open} open comments`}>
