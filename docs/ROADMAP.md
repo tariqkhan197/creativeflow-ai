@@ -43,7 +43,7 @@ Deliberately not in Phase 2:
 - Client-role invitations (client portal access) arrive in Phase 4.
 - Tasks move between columns with a status selector. Drag-and-drop ordering is not implemented.
 
-## Phase 3 — Media & timestamped review ✅ (implemented; real-project verification pending)
+## Phase 3 — Media & timestamped review ✅ (complete)
 
 - [x] Secure uploads: the asset record is created server-side first, then direct browser → Storage resumable (TUS)
       upload in 6 MB chunks with progress, pause/resume, retry on the same record, cancel with storage cleanup, and
@@ -63,7 +63,11 @@ Deliberately not in Phase 2:
 - [x] Supabase Realtime live comments (RLS per subscriber, de-duplication, re-sync after reconnect)
 - [x] Reviews page, activity entries, project deletion empties Storage first
 - [x] Tests: 28 new DB tests (82 total, both grant modes), unit and integration tests (125, including a real TUS
-      server), 36 browser checks of the review UI, and Phase 3 flows in `verify:supabase -- --e2e`
+      server), 37 browser checks of the review UI, and Phase 3 flows in `verify:supabase -- --e2e`
+- [x] Verified on the real Supabase project:
+  - `verify:supabase -- --e2e`: 64 passed, 1 warning (optional `STORAGE_MAX_UPLOAD_BYTES` not set), 0 failed.
+    This followed the Realtime fix that waits for server confirmation of the `postgres_changes` subscription.
+  - All 10 steps of the manual browser checklist in `docs/TESTING.md` passed.
 
 Limitations, by design or deferred:
 

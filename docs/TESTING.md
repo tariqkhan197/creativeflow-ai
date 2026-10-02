@@ -10,6 +10,9 @@
 
 ## Phase 3 manual browser checklist (real Supabase)
 
+**Status: passed.** All 10 steps passed against the real project, and `verify:supabase -- --e2e` reported 64 passed,
+1 warning, 0 failed.
+
 Use two browsers, or a normal and a private window, signed in as two members of the same workspace. Use real files:
 an MP4 (H.264), an image, an MP3/WAV, a PDF, and if you have one a ProRes `.mov` or an `.avi`.
 
