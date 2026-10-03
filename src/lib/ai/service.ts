@@ -10,10 +10,11 @@ import type { Database, Json, WorkspaceRole } from "@/types/database";
 import { createAnthropicMessages, generateStructured, SCRIPT_MAX_TOKENS, type MessagesParser } from "./anthropic";
 import { getAiConfig, type AiConfig } from "./config";
 import { logDetails, toAiFailure, type AiFailureCode } from "./errors";
+import { createGeminiModels, generateStructuredGemini, type GeminiModels } from "./gemini";
 import { buildScriptUserMessage, SCRIPT_PROMPT_VERSION, SCRIPT_SYSTEM_PROMPT } from "./prompts";
 import { scriptBriefSchema, scriptOutputSchema } from "./script-schema";
 
-/** Thinking depth for scripts on the default model (Claude Sonnet 5.5): a balance of quality and cost. */
+/** Thinking depth for scripts on Claude (Anthropic only; Gemini uses the model's default). */
 const SCRIPT_EFFORT = "medium" as const;
 
 export type AiRunOutcome =
@@ -37,7 +38,10 @@ export type AiServiceDeps = {
   /** Supabase with the server's secret key: only used to record results via finish_ai_run(). */
   adminDb: () => Db;
   config: () => AiConfig;
+  /** Anthropic client (used only when AI_PROVIDER is "anthropic"). */
   messages: (apiKey: string) => MessagesParser;
+  /** Gemini client (used only when AI_PROVIDER is "gemini"). */
+  gemini: (apiKey: string) => GeminiModels;
 };
 
 const defaultDeps: AiServiceDeps = {
@@ -49,6 +53,7 @@ const defaultDeps: AiServiceDeps = {
   adminDb: createAdminClient,
   config: getAiConfig,
   messages: createAnthropicMessages,
+  gemini: createGeminiModels,
 };
 
 function fieldErrors(issues: { path: PropertyKey[]; message: string }[]) {
@@ -60,8 +65,8 @@ function fieldErrors(issues: { path: PropertyKey[]; message: string }[]) {
 /**
  * Generates a script for the active workspace: checks the user is staff,
  * validates the brief, reserves the run with start_ai_generation() (the
- * database checks membership and the workspace/user limits), calls Claude on
- * the server, and records the outcome with finish_ai_run() using the secret
+ * database checks membership and the workspace/user limits), calls the
+ * configured provider (Gemini or Anthropic, never both) on the server, and records the outcome with finish_ai_run() using the secret
  * key. Every outcome is recorded; nothing is shown to the user that the
  * model didn't produce.
  */
@@ -120,14 +125,19 @@ export async function generateScript(input: unknown, deps: AiServiceDeps = defau
   let finish: Database["public"]["Functions"]["finish_ai_run"]["Args"];
   let outcome: AiRunOutcome;
   try {
-    const result = await generateStructured(deps.messages(config.apiKey), {
+    const request = {
       model: config.model,
       system: SCRIPT_SYSTEM_PROMPT,
       user: userMessage,
       schema: scriptOutputSchema,
       maxTokens: SCRIPT_MAX_TOKENS,
-      effort: SCRIPT_EFFORT,
-    });
+    };
+    // Only the configured provider is called; a failure is reported, never
+    // retried with another provider or model.
+    const result =
+      config.provider === "gemini"
+        ? await generateStructuredGemini(deps.gemini(config.apiKey), request)
+        : await generateStructured(deps.messages(config.apiKey), { ...request, effort: SCRIPT_EFFORT });
     finish = {
       p_event: eventId,
       p_succeeded: true,
@@ -145,7 +155,12 @@ export async function generateScript(input: unknown, deps: AiServiceDeps = defau
     };
   } catch (error) {
     const failure = toAiFailure(error);
-    console.error("[ai] script generation failed", { generationId, code: failure.code, ...logDetails(error) });
+    console.error("[ai] script generation failed", {
+      generationId,
+      provider: config.provider,
+      code: failure.code,
+      ...logDetails(error),
+    });
     finish = { p_event: eventId, p_succeeded: false, p_model: config.model, p_error: failure.message };
     outcome = { ok: false, code: failure.code, message: failure.message, generationId };
   }

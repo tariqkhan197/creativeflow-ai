@@ -52,6 +52,7 @@ w.mountAiBrief = (disabledReason) => {
           callToAction: "",
         }}
         disabledReason={disabledReason}
+        dataNote="The brief is sent to Google (Gemini API, free tier) to write the script."
       />
     </div>,
   );

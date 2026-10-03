@@ -5,7 +5,7 @@ with timestamped comments, approvals and revisions, AI scripts and storyboards, 
 team collaboration into one secure, multi-tenant workspace.
 
 **Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · shadcn/ui · Supabase (Postgres + RLS,
-Auth, Storage, Realtime) · Anthropic · Stripe
+Auth, Storage, Realtime) · Google Gemini (or Anthropic) · Stripe
 
 > **Status: Phase 1 (foundation).** Auth, workspaces, the app shell, the dashboard and the full database schema are
 > live. See [docs/ROADMAP.md](docs/ROADMAP.md) for what ships next.

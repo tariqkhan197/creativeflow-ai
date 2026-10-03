@@ -22,11 +22,14 @@ export function ScriptBriefForm({
   projects,
   defaults,
   disabledReason,
+  dataNote,
 }: {
   projects: Option[];
   defaults: BriefDefaults;
   /** Why generating isn't possible right now (not configured, limit reached); null when it is. */
   disabledReason: string | null;
+  /** Where the brief is sent (from the server's AI settings); null when no provider is selected. */
+  dataNote: string | null;
 }) {
   const [state, action, pending] = useActionState(generateScriptAction, initialFormState);
   const e = state.fieldErrors ?? {};
@@ -34,7 +37,7 @@ export function ScriptBriefForm({
   const failedRun = state.status === "error" ? state.data?.generationId : undefined;
 
   return (
-    <form action={action} className="grid gap-5" noValidate aria-describedby="brief-note">
+    <form action={action} className="grid gap-5" noValidate aria-describedby={dataNote ? "brief-note" : undefined}>
       {disabledReason ? (
         <p role="status" className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm">
           {disabledReason}
@@ -143,10 +146,11 @@ export function ScriptBriefForm({
           </p>
         ) : null}
       </div>
-      <p id="brief-note" className="text-xs text-muted-foreground">
-        The brief is sent to Anthropic (Claude) to write the script. Don&apos;t include passwords or personal data you
-        wouldn&apos;t share with a supplier.
-      </p>
+      {dataNote ? (
+        <p id="brief-note" className="text-xs text-muted-foreground">
+          {dataNote}
+        </p>
+      ) : null}
     </form>
   );
 }

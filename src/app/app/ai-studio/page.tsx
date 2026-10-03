@@ -8,7 +8,7 @@ import { ScriptBriefForm } from "@/components/ai/script-brief-form";
 import { EmptyState } from "@/components/app/empty-state";
 import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { isAiConfigured } from "@/lib/ai/config";
+import { getAiStatus } from "@/lib/ai/config";
 import { AI_LIMITS, briefDefaultsFrom, usageWindowStarts, type BriefDefaults } from "@/lib/ai/studio";
 import { isStaff } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -89,9 +89,9 @@ export default async function AiStudioPage({ searchParams }: PageProps<"/app/ai-
   const defaults: BriefDefaults = source.data ? briefDefaultsFrom(source.data) : { ...EMPTY_BRIEF };
   if (projectParam && projectList.some((p) => p.id === projectParam)) defaults.projectId = projectParam;
 
-  const configured = isAiConfigured();
-  const disabledReason = !configured
-    ? "AI Studio isn't set up for this deployment yet. An administrator needs to add the Anthropic API key and the Supabase secret key on the server (see docs/SETUP.md)."
+  const ai = getAiStatus();
+  const disabledReason = !ai.configured
+    ? `${ai.message ?? "AI Studio isn't set up for this deployment yet."} An administrator can set this up (see docs/SETUP.md).`
     : usedToday >= AI_LIMITS.workspacePerDay
       ? `This workspace has used all ${AI_LIMITS.workspacePerDay} AI generations for the last 24 hours. Please try again later.`
       : usedThisHour >= AI_LIMITS.userPerHour
@@ -112,7 +112,7 @@ export default async function AiStudioPage({ searchParams }: PageProps<"/app/ai-
     <div className="grid gap-6">
       <PageHeader
         title="AI Studio"
-        description="Turn a brief into a scene-by-scene video script with Claude, then edit it with your team."
+        description={`Turn a brief into a scene-by-scene video script${ai.providerLabel ? ` with ${ai.providerLabel}` : ""}, then edit it with your team.`}
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -131,6 +131,7 @@ export default async function AiStudioPage({ searchParams }: PageProps<"/app/ai-
               projects={projectList}
               defaults={defaults}
               disabledReason={disabledReason}
+              dataNote={ai.dataNote}
             />
           </CardContent>
         </Card>

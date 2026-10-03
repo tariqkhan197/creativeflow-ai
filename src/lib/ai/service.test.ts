@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MessagesParser } from "./anthropic";
+import type { GeminiModels } from "./gemini";
 import type { AiServiceDeps } from "./service";
 import { generateScript } from "./service";
 import { validScript } from "./test-fixtures";
@@ -23,6 +24,8 @@ function setup(
     start?: RpcResult;
     finish?: RpcResult;
     model?: () => Promise<unknown>;
+    provider?: "anthropic" | "gemini";
+    gemini?: () => Promise<unknown>;
   } = {},
 ) {
   const userRpc = vi.fn(
@@ -43,17 +46,37 @@ function setup(
     void apiKey;
     return { parse } as unknown as MessagesParser;
   });
+  const generateContent = vi.fn(
+    opts.gemini ??
+      (async () => ({
+        candidates: [{ finishReason: "STOP" }],
+        text: JSON.stringify(validScript),
+        modelVersion: "gemini-test-model-001",
+        usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 2000, thoughtsTokenCount: 300 },
+      })),
+  );
+  const geminiFor = vi.fn((apiKey: string) => {
+    void apiKey;
+    return { generateContent } as unknown as GeminiModels;
+  });
+  const provider = opts.provider ?? "anthropic";
   const deps: AiServiceDeps = {
     context: async () => ({ userId: "user-1", workspaceId: "ws-1", role: opts.role ?? "member" }),
     userDb: async () => ({ rpc: userRpc }) as never,
     adminDb: () => ({ rpc: adminRpc }) as never,
     config: () =>
       opts.configured === false
-        ? { configured: false, reason: "missing_api_key", message: "AI Studio isn't set up yet." }
-        : { configured: true, apiKey: "test-key", model: "claude-sonnet-5-5" },
+        ? { configured: false, provider, reason: "missing_api_key", message: "AI Studio isn't set up yet." }
+        : {
+            configured: true,
+            provider,
+            apiKey: "test-key",
+            model: provider === "gemini" ? "gemini-test-model" : "claude-sonnet-5-5",
+          },
     messages: messagesFor,
+    gemini: geminiFor,
   };
-  return { deps, userRpc, adminRpc, parse, messagesFor };
+  return { deps, userRpc, adminRpc, parse, messagesFor, generateContent, geminiFor };
 }
 
 describe("generateScript", () => {
@@ -185,5 +208,77 @@ describe("generateScript", () => {
       generationId: "gen-1",
     });
     vi.restoreAllMocks();
+  });
+
+  describe("with Gemini", () => {
+    it("calls only Gemini and records its model version and tokens (thinking included)", async () => {
+      const t = setup({ provider: "gemini" });
+      await expect(generateScript(brief, t.deps)).resolves.toEqual({
+        ok: true,
+        generationId: "gen-1",
+        model: "gemini-test-model-001",
+        inputTokens: 800,
+        outputTokens: 2300,
+      });
+      expect(t.geminiFor).toHaveBeenCalledWith("test-key");
+      expect(t.messagesFor).not.toHaveBeenCalled();
+      expect(t.parse).not.toHaveBeenCalled();
+      const sent = (t.generateContent.mock.calls[0] as unknown[])[0] as { model: string; contents: string };
+      const stored = (t.userRpc.mock.calls[0] as unknown[])[1] as { p_prompt: string };
+      expect(sent.model).toBe("gemini-test-model");
+      expect(sent.contents).toBe(stored.p_prompt);
+      expect(t.adminRpc).toHaveBeenCalledWith("finish_ai_run", {
+        p_event: "event-1",
+        p_succeeded: true,
+        p_model: "gemini-test-model-001",
+        p_input_tokens: 800,
+        p_output_tokens: 2300,
+        p_output: validScript,
+      });
+    });
+
+    it("records a used-up free quota as a failed run and never falls back to Anthropic", async () => {
+      const { ApiError } = await import("@google/genai");
+      const t = setup({
+        provider: "gemini",
+        gemini: async () => {
+          throw new ApiError({
+            status: 429,
+            message: JSON.stringify({
+              error: {
+                code: 429,
+                status: "RESOURCE_EXHAUSTED",
+                message: "Quota exceeded (internal detail)",
+                details: [
+                  {
+                    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                    violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier", quotaValue: "250" }],
+                  },
+                ],
+              },
+            }),
+          });
+        },
+      });
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      const outcome = await generateScript(brief, t.deps);
+      expect(outcome).toMatchObject({ ok: false, code: "quota_exceeded", generationId: "gen-1" });
+      expect(t.messagesFor).not.toHaveBeenCalled();
+      expect(t.generateContent).toHaveBeenCalledTimes(1);
+      const finish = (t.adminRpc.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+      expect(finish).toMatchObject({ p_succeeded: false, p_model: "gemini-test-model" });
+      expect(String(finish.p_error)).toMatch(/free Gemini quota for today/);
+      expect(String(finish.p_error)).not.toContain("internal detail");
+      expect(JSON.stringify(errorLog.mock.calls)).not.toContain("test-key");
+      errorLog.mockRestore();
+    });
+
+    it("doesn't call any model when Gemini isn't configured", async () => {
+      const t = setup({ provider: "gemini", configured: false });
+      await expect(generateScript(brief, t.deps)).resolves.toMatchObject({ ok: false, code: "not_configured" });
+      expect(t.generateContent).not.toHaveBeenCalled();
+      expect(t.parse).not.toHaveBeenCalled();
+      expect(t.userRpc).not.toHaveBeenCalled();
+    });
   });
 });

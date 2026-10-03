@@ -134,26 +134,65 @@ Open <http://localhost:3000>, create an account, confirm your email and create y
 
 ## 7. Optional integrations
 
-| Integration | Variables                                                                     | Where to get them                                                               | Needed from         |
-| ----------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------- |
-| Anthropic   | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), plus `SUPABASE_SECRET_KEY` | <https://console.anthropic.com/settings/keys>                                   | Phase 5 (AI Studio) |
-| Stripe      | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                  | <https://dashboard.stripe.com/apikeys>; webhook endpoint `/api/webhooks/stripe` | Phase 6             |
+| Integration | Variables                                                                                              | Where to get them                                                               | Needed from                               |
+| ----------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ----------------------------------------- |
+| Gemini      | `GEMINI_API_KEY`, `GEMINI_MODEL`, plus `SUPABASE_SECRET_KEY` (`AI_PROVIDER=gemini`, the default)       | <https://aistudio.google.com/app/apikey>                                        | Phase 5 (AI Studio)                       |
+| Anthropic   | `AI_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), plus `SUPABASE_SECRET_KEY` | <https://console.anthropic.com/settings/keys>                                   | Phase 5 (AI Studio), optional alternative |
+| Stripe      | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                                           | <https://dashboard.stripe.com/apikeys>; webhook endpoint `/api/webhooks/stripe` | Phase 6                                   |
 
 All of these are server-only variables.
 
 ### AI Studio (Phase 5)
 
-1. Create an API key at <https://console.anthropic.com/settings/keys> and add credits or billing. Set a monthly
-   spend limit there (Settings → Limits) as a hard cap.
-2. Set `ANTHROPIC_API_KEY` and `SUPABASE_SECRET_KEY` (the server records AI results with it) in `.env.local`, and in
-   Vercel under Production (server-only; never prefix them with `NEXT_PUBLIC_`).
-3. Optional: `ANTHROPIC_MODEL`. The default is `claude-sonnet-5-5` (Claude Sonnet 5.5, $2 / $10 per million input /
-   output tokens). A value that isn't a valid Anthropic model ID disables AI Studio with a clear message.
-4. Check the key and model from your machine with `npm run test:ai-live`. It makes one small real request (a
-   10-second script, a few cents) and writes nothing to the database.
+AI Studio calls one provider, chosen with `AI_PROVIDER`: `gemini` (the default, free tier) or `anthropic` (paid).
+Only the selected provider is called. If it isn't fully configured, AI Studio shows "isn't set up" and nothing is
+sent anywhere; the app never falls back to another provider or model.
 
-The app also limits usage: 50 AI calls per workspace per 24 hours and 20 per user per hour (failed calls count).
-`/setup` shows AI Studio as configured only when both keys are set.
+#### Google Gemini (free tier, default)
+
+1. In [Google AI Studio](https://aistudio.google.com/app/apikey), create an API key in a Google Cloud project that
+   has **no billing account linked**. Without billing, the project can only use free-tier quota: requests beyond it
+   (or to models without a free tier) fail with a clear message and are never charged. Linking billing moves the
+   project to a paid tier.
+2. Choose the model. Open the [Gemini API pricing page](https://ai.google.dev/gemini-api/docs/pricing) and pick a
+   text model whose **Free Tier** column says "Free of charge" for input and output, then check its free limits on
+   the [rate limits page](https://ai.google.dev/gemini-api/docs/rate-limits) (also shown per project in AI Studio).
+   Prefer a stable model code over a `-preview` one; previews change and are retired at short notice. There is
+   deliberately no default model, so nothing is picked implicitly.
+3. Set `GEMINI_API_KEY`, `GEMINI_MODEL` and `SUPABASE_SECRET_KEY` (the server records AI results with it) in
+   `.env.local`, and in Vercel under Production (server-only; never prefix them with `NEXT_PUBLIC_`). `AI_PROVIDER`
+   can stay unset.
+4. Check the key and model with `npm run test:ai-live`: one real request (a 10-second script) that uses one request
+   of the free daily quota and writes nothing to the database.
+
+Free-tier limitations to know about:
+
+- **Daily and per-minute limits are Google's, per Google Cloud project** (not per key or per workspace) and depend
+  on the model. They can be lower than the app's own limits below. When the daily quota is used up, AI Studio says
+  so and when it resets (midnight Pacific time); when the per-minute limit is hit, it asks people to wait a minute.
+  A model without free quota is reported as such. None of these are retried automatically, so they don't burn
+  more quota. Failed calls still count toward the app's limits.
+- **Data use:** on the free (unpaid) tier, Google may use prompts and responses to improve its products, and human
+  reviewers may read them ([Gemini API terms](https://ai.google.dev/gemini-api/terms)). The brief form tells people
+  this; don't put confidential client material in briefs while on the free tier.
+- **Availability:** the free tier isn't offered in every country; from an unsupported region the API refuses
+  requests and AI Studio reports that the Gemini API can't be used from this project or region.
+- Gemini doesn't have Claude's "effort" setting; the model's default thinking is used. Token counts stored with each
+  run include thinking tokens.
+
+#### Anthropic (paid, optional)
+
+1. Set `AI_PROVIDER=anthropic`.
+2. Create an API key at <https://console.anthropic.com/settings/keys> and add credits or billing. Set a monthly
+   spend limit there (Settings → Limits) as a hard cap.
+3. Set `ANTHROPIC_API_KEY` and `SUPABASE_SECRET_KEY` as above.
+4. Optional: `ANTHROPIC_MODEL`. The default is `claude-sonnet-5-5` (Claude Sonnet 5.5, $2 / $10 per million input /
+   output tokens). A value that isn't a valid Anthropic model ID disables AI Studio with a clear message.
+5. `npm run test:ai-live` makes one small real request (a few cents) and writes nothing to the database.
+
+The app also limits usage with either provider: 50 AI calls per workspace per 24 hours and 20 per user per hour
+(failed calls count). `/setup` shows AI Studio as configured only when the selected provider's settings and the
+Supabase secret key are set.
 
 Generating a script usually takes under a minute but can take up to about two and a half minutes. The AI Studio pages
 set `maxDuration = 300` (seconds) for their Server Actions. Check that your Vercel plan allows this function duration

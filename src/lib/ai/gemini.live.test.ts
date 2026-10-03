@@ -1,29 +1,31 @@
 /**
- * Live check against the real Anthropic API (npm run test:ai-live), run only
- * when AI_PROVIDER=anthropic. Uses ANTHROPIC_API_KEY and ANTHROPIC_MODEL from
- * .env.local; costs a few cents. Nothing is written to the database.
+ * Live check against the real Gemini API (npm run test:ai-live), run when
+ * AI_PROVIDER is "gemini" or unset. Uses GEMINI_API_KEY and GEMINI_MODEL from
+ * .env.local and one request of the project's free-tier quota. Nothing is
+ * written to the database.
  */
 import { existsSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
-const selected = process.env.AI_PROVIDER?.trim().toLowerCase() === "anthropic";
+const selected = (process.env.AI_PROVIDER?.trim().toLowerCase() || "gemini") === "gemini";
 
 beforeAll(() => {
-  if (selected && !process.env.ANTHROPIC_API_KEY?.trim()) {
-    throw new Error("Set ANTHROPIC_API_KEY in .env.local to run the live AI test.");
+  if (!selected) return;
+  if (!process.env.GEMINI_API_KEY?.trim() || !process.env.GEMINI_MODEL?.trim()) {
+    throw new Error("Set GEMINI_API_KEY and GEMINI_MODEL in .env.local to run the live AI test.");
   }
 });
 
-describe.skipIf(!selected)("Anthropic (live)", () => {
+describe.skipIf(!selected)("Gemini (live)", () => {
   it("generates a schema-valid script with the configured model", async () => {
-    const { createAnthropicMessages, generateStructured } = await import("./anthropic");
-    const { DEFAULT_AI_MODEL } = await import("./config");
+    const { createGeminiModels, generateStructuredGemini } = await import("./gemini");
+    const { toAiFailure } = await import("./errors");
     const { buildScriptUserMessage, SCRIPT_SYSTEM_PROMPT } = await import("./prompts");
     const { scriptOutputSchema } = await import("./script-schema");
 
-    const model = process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_AI_MODEL;
-    const result = await generateStructured(createAnthropicMessages(process.env.ANTHROPIC_API_KEY!.trim()), {
+    const model = process.env.GEMINI_MODEL!.trim();
+    const result = await generateStructuredGemini(createGeminiModels(process.env.GEMINI_API_KEY!.trim()), {
       model,
       system: SCRIPT_SYSTEM_PROMPT,
       user: buildScriptUserMessage({
@@ -34,7 +36,10 @@ describe.skipIf(!selected)("Anthropic (live)", () => {
       }),
       schema: scriptOutputSchema,
       maxTokens: 16_000,
-      effort: "medium",
+    }).catch((error: unknown) => {
+      // Show the same safe message the app would (quota, rate limit, key, model).
+      const failure = toAiFailure(error);
+      throw new Error(`Live Gemini request failed (${failure.code}): ${failure.message}`);
     });
 
     expect(result.model.startsWith(model)).toBe(true);

@@ -134,6 +134,8 @@ Making Phases 1–4 safe to run for real customers. It doesn't add modules; Phas
       failed states, usage meters, workspace script history, script page with editing (text, timing, dialogue,
       add/remove/reorder scenes), rename and link to a project, delete, "New version" / "Try again" from the same
       brief, "Write a script" from a project, AI activity in the feed, sidebar link enabled
+- [x] Provider switch — Google Gemini (free tier, `GEMINI_MODEL` chosen explicitly) is the default provider;
+      Anthropic remains available with `AI_PROVIDER=anthropic`; no fallback between providers or models
 - [ ] Step 4 — rewrite a single scene with AI (`start_ai_revision`)
 - [ ] Step 5 — storyboard from a script
 - [ ] Step 6 — scripts on the project page, CSV export and print page
@@ -141,11 +143,11 @@ Making Phases 1–4 safe to run for real customers. It doesn't add modules; Phas
 
 Scope:
 
-- Anthropic integration (server only) with structured outputs
+- AI integration (server only) with structured outputs: Google Gemini (default) or Anthropic
 - Script generator from a brief (tone, duration, audience, CTA) → scenes with VO/dialogue, visuals, timing
 - Storyboard generator from a script → frames with shot type, camera, description, duration
 - Save to project, edit, regenerate a scene, export (PDF/CSV), history with token usage
-- Per-workspace rate limiting and clear "not configured" state when `ANTHROPIC_API_KEY` is missing
+- Per-workspace rate limiting and clear "not configured" state when the provider's key or model is missing
 
 ## Phase 6 — Invoices & payments
 

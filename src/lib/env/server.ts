@@ -15,6 +15,11 @@ export const serverEnv = {
     clean(process.env.SUPABASE_SECRET_KEY) ??
     // Legacy name, still supported by Supabase.
     clean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+  /** "gemini" (default) or "anthropic"; src/lib/ai/config.ts validates it. */
+  aiProvider: clean(process.env.AI_PROVIDER),
+  geminiApiKey: clean(process.env.GEMINI_API_KEY),
+  /** The Gemini model code (required for Gemini); src/lib/ai/config.ts validates it. */
+  geminiModel: clean(process.env.GEMINI_MODEL),
   anthropicApiKey: clean(process.env.ANTHROPIC_API_KEY),
   /** Optional override; src/lib/ai/config.ts validates it and supplies the default model. */
   anthropicModel: clean(process.env.ANTHROPIC_MODEL),
@@ -46,6 +51,7 @@ export type IntegrationStatus = {
  */
 export async function getIntegrationStatus(): Promise<IntegrationStatus[]> {
   const { isSupabaseConfigured } = await import("./public");
+  const { isAiConfigured } = await import("@/lib/ai/config");
   return [
     {
       key: "supabase",
@@ -64,12 +70,16 @@ export async function getIntegrationStatus(): Promise<IntegrationStatus[]> {
       purpose: "Records AI Studio results on the server (and, later, Stripe payments).",
     },
     {
-      key: "anthropic",
-      label: "Anthropic (AI scripts & storyboards)",
-      configured: Boolean(serverEnv.anthropicApiKey && serverEnv.supabaseSecretKey),
+      key: "ai",
+      label: "AI Studio (scripts & storyboards)",
+      configured: isAiConfigured(),
       required: false,
-      envVars: ["ANTHROPIC_API_KEY", "SUPABASE_SECRET_KEY", "ANTHROPIC_MODEL (optional)"],
-      purpose: "Generates scripts and storyboards in AI Studio. Needs the Supabase secret key too.",
+      envVars: [
+        "AI_PROVIDER (gemini or anthropic; default gemini)",
+        "GEMINI_API_KEY and GEMINI_MODEL, or ANTHROPIC_API_KEY",
+        "SUPABASE_SECRET_KEY",
+      ],
+      purpose: "Generates scripts and storyboards in AI Studio with the selected provider.",
     },
     {
       key: "stripe",

@@ -1,7 +1,7 @@
 # Architecture
 
 CreativeFlow AI is a multi-tenant SaaS for agencies and video teams. It is a single Next.js 16 application backed by
-Supabase (Postgres, Auth, Storage, Realtime), with Anthropic for AI generation and Stripe for payments.
+Supabase (Postgres, Auth, Storage, Realtime), with Google Gemini (default, free tier) or Anthropic for AI generation and Stripe for payments.
 
 ```
  Browser ──HTTPS──▶ Next.js (Vercel / Node)
@@ -14,7 +14,7 @@ Supabase (Postgres, Auth, Storage, Realtime), with Anthropic for AI generation a
    ▼                          ▼                               ▼
  Supabase Realtime ◀──── Supabase Postgres + RLS ◀──────── Supabase Storage (private buckets)
                                  ▲
-             Anthropic API ◀─────┤ (server only, Phase 5)
+  Gemini or Anthropic API ◀─────┤ (server only, Phase 5; one provider per AI_PROVIDER)
              Stripe API    ◀─────┘ (server only, Phase 6)
 ```
 
@@ -170,19 +170,26 @@ signed-in staff ──▶ generateScript() (src/lib/ai/service.ts, server only)
                      1. role check + zod brief validation
                      2. not configured? → honest error, nothing reserved
                      3. start_ai_generation()   as the user  → membership + limits (DB, under locks)
-                     4. Anthropic Messages API  structured output (zod schema), adaptive thinking
+                     4. AI_PROVIDER's API only  Gemini generateContent (responseJsonSchema) or
+                                                Anthropic Messages (structured output), never both
                      5. finish_ai_run()         with the secret key → result, model, tokens, or a safe error
 ```
 
-- The Anthropic key and the Supabase secret key are read only in `server-only` modules (`src/lib/ai/config.ts`,
-  `src/lib/supabase/admin.ts`). `npm run check:bundle` (also in CI) fails the build check if a secret name, the
-  Anthropic SDK or a key-shaped value appears in the browser bundles.
+- The provider keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) and the Supabase secret key are read only in
+  `server-only` modules (`src/lib/ai/config.ts`, `src/lib/supabase/admin.ts`). `npm run check:bundle` (also in CI)
+  fails if a secret name, either AI SDK or endpoint, or a key-shaped value appears in the browser bundles.
+- `AI_PROVIDER` selects the provider (`gemini` by default; `anthropic` only when set explicitly). There is no
+  fallback between providers or models: an unconfigured provider makes AI Studio "not configured", and a failed
+  call is recorded as a failed run. Gemini has no default model; `GEMINI_MODEL` must name a free-tier model.
 - Users can't record or change AI results: only `finish_ai_run()`, executable by the secret-key role, writes status,
   output, model and tokens (Phase 5 database rules in [DATABASE.md](DATABASE.md)).
-- The model's answer must match a JSON schema (Claude structured outputs) and is validated again with zod before it
-  is stored. Refusals, truncated answers, invalid output and API errors (auth, unknown model, rate limits,
-  overload, timeouts) become short, safe messages; logs record the error class, HTTP status and request ID only.
-- Refusal fallback to another model is off (decision D5). The SDK retries a failed request once.
+- The model's answer must match a JSON schema (Gemini `responseJsonSchema`, reduced to the keywords Gemini supports,
+  or Claude structured outputs) and is validated again with zod before it is stored. Refusals and blocked answers,
+  truncated answers, invalid output and API errors (auth, unknown model, rate limits, Gemini's daily free quota and
+  models without free quota, region restrictions, overload, timeouts) become short, safe messages; logs record the
+  error class, HTTP status and request or quota IDs only.
+- Refusal fallback to another model is off (decision D5). Each SDK retries a failed request once (Gemini: server
+  errors only, never 429, so quota isn't spent on retries).
 
 AI Studio pages (`src/app/app/ai-studio`) are staff-only server components that read through the user's RLS client.
 The brief form posts to `generateScriptAction` (`src/lib/actions/ai-studio.ts`), which calls `generateScript()` and
@@ -203,12 +210,12 @@ meters count `ai_usage_events` for display only; the database enforces the limit
 
 ## Technology choices
 
-| Concern    | Choice                                        | Why                                                          |
-| ---------- | --------------------------------------------- | ------------------------------------------------------------ |
-| Framework  | Next.js 16 App Router, React 19, TypeScript   | Server Components + Server Actions keep secrets server-side  |
-| Styling    | Tailwind CSS v4, shadcn/ui (Radix primitives) | Accessible primitives, owned component code                  |
-| Data/Auth  | Supabase                                      | Postgres + RLS for tenant isolation, Auth, Storage, Realtime |
-| Validation | zod                                           | Shared schemas for forms and server                          |
-| AI         | Anthropic Messages API                        | Structured script/storyboard generation                      |
-| Payments   | Stripe Checkout + webhooks                    | PCI scope stays with Stripe                                  |
-| DB tests   | PGlite (Postgres in WASM) + Supabase stubs    | Runs RLS tests in CI without Docker                          |
+| Concern    | Choice                                         | Why                                                          |
+| ---------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| Framework  | Next.js 16 App Router, React 19, TypeScript    | Server Components + Server Actions keep secrets server-side  |
+| Styling    | Tailwind CSS v4, shadcn/ui (Radix primitives)  | Accessible primitives, owned component code                  |
+| Data/Auth  | Supabase                                       | Postgres + RLS for tenant isolation, Auth, Storage, Realtime |
+| Validation | zod                                            | Shared schemas for forms and server                          |
+| AI         | Gemini API (default) or Anthropic Messages API | Structured script/storyboard generation                      |
+| Payments   | Stripe Checkout + webhooks                     | PCI scope stays with Stripe                                  |
+| DB tests   | PGlite (Postgres in WASM) + Supabase stubs     | Runs RLS tests in CI without Docker                          |
