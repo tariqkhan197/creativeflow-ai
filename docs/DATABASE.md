@@ -99,6 +99,9 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 - `20261002000000_phase2_team_projects.sql`: Phase 2 rules, listed below.
 - `20261003000000_phase3_media_review.sql`: Phase 3 rules, listed below.
 - `20261004000000_phase4_client_portal.sql`: Phase 4 rules, listed below.
+- `20261004000100_keep_records_on_user_deletion.sql`: deleting an account keeps the comments and files that person
+  wrote or uploaded (the author/uploader/resolver becomes empty). Before this, the Phase 3 triggers refused the
+  automatic clean-up, so such an account could not be deleted.
 
 ### Phase 2 database rules
 

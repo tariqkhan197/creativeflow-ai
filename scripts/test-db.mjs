@@ -2081,6 +2081,130 @@ async function main() {
     assert.ok((await activity(wsA, "member.removed")).length >= 1);
   });
 
+  /* ======================================================================== */
+  /* Account deletion keeps the work (20261004000100)                         */
+  /* ======================================================================== */
+
+  console.log("\nAccount deletion");
+  const quinn = await createUser("quinn@agency-a.test", "Quinn");
+  const kim = await createUser("kim@client.test", "Kim");
+  let qFile, qVersion, kimComment, quinnReply, quinnComment, qTask, qApproval;
+  await test("setup: a member and a client user who uploaded, commented, resolved and approved", async () => {
+    await inviteAndAccept(alice, wsA, "quinn@agency-a.test", "member", quinn);
+    const t = await clientInvite(carol, wsA, "kim@client.test", clientId);
+    await as(kim, (tx) => tx.query(`select public.accept_invitation($1)`, [t]));
+    ({ id: qFile } = await uploadAsset(quinn, wsA, projectId, { file: "quinn.mp4", duration: 10 }));
+    ({ id: qVersion } = await uploadAsset(quinn, wsA, projectId, { file: "quinn-v2.mp4", duration: 10, root: qFile }));
+    await as(carol, (tx) => tx.query(`update public.assets set shared_with_client = true where id = $1`, [qVersion]));
+    kimComment = (await addComment(kim, { asset: qVersion, body: "Client note", t: 2 })).id;
+    quinnReply = (await addComment(quinn, { asset: qVersion, body: "Fixed", parent: kimComment })).id;
+    quinnComment = (await addComment(quinn, { asset: qVersion, body: "Team note", internal: true })).id;
+    await as(quinn, (tx) =>
+      tx.query(`update public.review_comments set resolved_at = now() where id = $1`, [kimComment]),
+    );
+    qTask = await as(
+      quinn,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.tasks (workspace_id, project_id, title, created_by, assignee_id)
+             values ($1, $2, 'Grade', $3, $3) returning id`,
+            [wsA, projectId, quinn],
+          )
+        ).rows[0].id,
+    );
+    qApproval = await requestApproval(quinn, qVersion, "Quinn cut");
+    await decide(kim, qApproval, "changes_requested", "Warmer grade");
+  });
+
+  await test("API callers still can't clear or reassign who wrote, resolved or uploaded something", async () => {
+    await rejects(
+      as(quinn, (tx) => tx.query(`update public.review_comments set author_id = null where id = $1`, [quinnComment])),
+      /Only the comment text and resolved state/,
+    );
+    await rejects(
+      as(quinn, (tx) =>
+        tx.query(`update public.review_comments set author_id = $2 where id = $1`, [quinnComment, carol]),
+      ),
+      /Only the comment text and resolved state/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.review_comments set resolved_by = null where id = $1`, [kimComment])),
+      /Only the comment text and resolved state/,
+    );
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.assets set uploaded_by = null where id = $1`, [qFile])),
+      /cannot be changed/,
+    );
+  });
+
+  await test("deleting accounts keeps their files, comments, resolutions, tasks and decisions", async () => {
+    await db.query(`delete from auth.users where id = any($1::uuid[])`, [[quinn, kim]]);
+    const files = (
+      await db.query(
+        `select id, status, uploaded_by from public.assets where id = any($1::uuid[]) order by version_number`,
+        [[qFile, qVersion]],
+      )
+    ).rows;
+    assert.deepEqual(
+      files.map((f) => [f.id, f.status, f.uploaded_by]),
+      [
+        [qFile, "ready", null],
+        [qVersion, "ready", null],
+      ],
+    );
+    const comments = (
+      await db.query(
+        `select id, body, author_id, resolved_by, resolved_at is not null as resolved, parent_id, is_internal
+         from public.review_comments where id = any($1::uuid[])`,
+        [[kimComment, quinnReply, quinnComment]],
+      )
+    ).rows;
+    const byId = Object.fromEntries(comments.map((c) => [c.id, c]));
+    assert.equal(comments.length, 3);
+    assert.deepEqual(
+      [byId[kimComment].body, byId[kimComment].author_id, byId[kimComment].resolved_by, byId[kimComment].resolved],
+      ["Client note", null, null, true],
+    );
+    assert.deepEqual([byId[quinnReply].author_id, byId[quinnReply].parent_id], [null, kimComment]);
+    assert.deepEqual([byId[quinnComment].body, byId[quinnComment].is_internal], ["Team note", true]);
+    const task = (await db.query(`select created_by, assignee_id from public.tasks where id = $1`, [qTask])).rows[0];
+    assert.deepEqual(task, { created_by: null, assignee_id: null });
+    const ap = (
+      await db.query(`select status, requested_by, decided_by from public.approvals where id = $1`, [qApproval])
+    ).rows[0];
+    assert.deepEqual(ap, { status: "changes_requested", requested_by: null, decided_by: null });
+    const round = (
+      await db.query(`select requested_by, summary from public.revisions where approval_id = $1`, [qApproval])
+    ).rows[0];
+    assert.deepEqual(round, { requested_by: null, summary: "Warmer grade" });
+    const members = (
+      await db.query(`select count(*)::int as n from public.workspace_members where user_id = any($1::uuid[])`, [
+        [quinn, kim],
+      ])
+    ).rows[0].n;
+    assert.equal(members, 0);
+  });
+
+  await test("nobody can take over a deleted author's comment", async () => {
+    await rejects(
+      as(carol, (tx) => tx.query(`update public.review_comments set body = 'hijacked' where id = $1`, [quinnComment])),
+      /Only the author can edit/,
+    );
+    await rejects(
+      as(carol, (tx) =>
+        tx.query(`update public.review_comments set author_id = $2 where id = $1`, [quinnComment, carol]),
+      ),
+      /Only the comment text and resolved state/,
+    );
+    const visible = await as(dana, async (tx) =>
+      (
+        await tx.query(`select id from public.review_comments where id = any($1::uuid[])`, [[kimComment, quinnComment]])
+      ).rows.map((r) => r.id),
+    );
+    assert.deepEqual(visible, [kimComment], "internal notes stay internal after the author is gone");
+  });
+
   console.log("\nPhase 2 · Cleanup");
   await test("deleting a populated workspace removes all of its data", async () => {
     const tmp = await as(
