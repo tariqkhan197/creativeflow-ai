@@ -1,4 +1,4 @@
-import { CheckIcon, MessageSquareIcon, PlayIcon, SparklesIcon } from "lucide-react";
+import { CheckIcon, MessageSquareIcon, PlayIcon, RotateCcwIcon } from "lucide-react";
 
 /**
  * Illustrative product composition for the hero (decorative, aria-hidden).
@@ -64,7 +64,7 @@ export function HeroVisual() {
         </div>
       </div>
       <div className="absolute -bottom-6 -left-4 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 text-xs shadow-lg sm:flex">
-        <SparklesIcon className="size-4 text-brand" /> Storyboard drafted from brief
+        <RotateCcwIcon className="size-4 text-brand" /> Revision round 2 opened
       </div>
       <div className="absolute -top-5 -right-3 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 text-xs shadow-lg sm:flex">
         <MessageSquareIcon className="size-4 text-warning" /> Comment pinned to frame

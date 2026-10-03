@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s · CreativeFlow AI",
   },
   description:
-    "Projects, client reviews, approvals, AI scripts and storyboards, and invoicing in one secure workspace for agencies and video teams.",
+    "Projects, frame-accurate client reviews, approvals and a client portal in one secure workspace for agencies and video teams.",
   applicationName: "CreativeFlow AI",
 };
 

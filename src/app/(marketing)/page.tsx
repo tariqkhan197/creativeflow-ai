@@ -19,6 +19,7 @@ import {
 import { HeroVisual } from "@/components/marketing/hero-visual";
 import { Button } from "@/components/ui/button";
 
+/** Available today. */
 const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
   {
     icon: FolderKanbanIcon,
@@ -36,38 +37,41 @@ const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
     body: "Request sign-off on any version. Every decision and revision round is recorded and timestamped.",
   },
   {
-    icon: SparklesIcon,
-    title: "AI scripts & storyboards",
-    body: "Turn a brief into a structured script and shot-by-shot storyboard, then refine it with your team.",
-  },
-  {
     icon: UsersIcon,
     title: "A client portal they'll actually use",
     body: "Clients see only the projects and cuts you share with them — nothing internal, ever.",
   },
   {
+    icon: BellIcon,
+    title: "Live comments & in-app alerts",
+    body: "Review comments appear live for everyone on the file, and approval requests and decisions arrive as in-app notifications.",
+  },
+];
+
+/** On the roadmap, not available yet. */
+const COMING_SOON: { icon: LucideIcon; title: string; body: string }[] = [
+  {
+    icon: SparklesIcon,
+    title: "AI scripts & storyboards",
+    body: "Turn a brief into a structured script and shot-by-shot storyboard.",
+  },
+  {
     icon: ReceiptIcon,
     title: "Invoices & online payments",
-    body: "Bill per project, accept card payments through Stripe and see every transaction as it settles.",
+    body: "Bill per project and accept card payments through Stripe.",
   },
   {
     icon: BarChart3Icon,
-    title: "Analytics from real work",
-    body: "Turnaround times, revision rounds and revenue computed straight from your workspace records.",
-  },
-  {
-    icon: BellIcon,
-    title: "Notifications & collaboration",
-    body: "Mentions, approvals and comments reach the right people in real time, in-app and by email.",
+    title: "Analytics",
+    body: "Turnaround times, revision rounds and revenue computed from your workspace records.",
   },
 ];
 
 const WORKFLOW = [
-  { step: "Brief", body: "Capture the client, budget and goals. Draft a script and storyboard with AI." },
+  { step: "Brief", body: "Capture the client, budget, dates and goals for the project." },
   { step: "Produce", body: "Plan tasks, assign your team and upload cuts as you go." },
   { step: "Review", body: "Share a version. Clients comment on exact timestamps." },
   { step: "Approve", body: "Collect sign-off or a clear revision list, round by round." },
-  { step: "Invoice", body: "Bill the project and get paid online." },
 ];
 
 const SECURITY: { icon: LucideIcon; title: string; body: string }[] = [
@@ -84,7 +88,7 @@ const SECURITY: { icon: LucideIcon; title: string; body: string }[] = [
   {
     icon: LockIcon,
     title: "Secrets stay on the server",
-    body: "API keys for AI and payments are only ever used server-side and are never shipped to the browser.",
+    body: "Server credentials are only ever used server-side and are never shipped to the browser.",
   },
   {
     icon: DatabaseIcon,
@@ -111,8 +115,8 @@ export default function LandingPage() {
               <span className="font-display font-normal text-brand italic">in one flow.</span>
             </h1>
             <p className="max-w-2xl text-lg text-pretty text-muted-foreground">
-              CreativeFlow AI brings projects, client reviews, approvals, AI scripting and invoicing into a single
-              secure workspace for advertising agencies and video teams.
+              CreativeFlow AI brings projects, frame-accurate client reviews and approvals into a single secure
+              workspace for advertising agencies and video teams.
             </p>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button asChild size="lg" variant="brand">
@@ -135,9 +139,9 @@ export default function LandingPage() {
           <SectionHeading
             eyebrow="Everything in one place"
             title="Built around how creative work actually ships"
-            body="Replace the patchwork of review links, spreadsheets, chat threads and invoicing tools."
+            body="Replace the patchwork of review links, spreadsheets and chat threads."
           />
-          <div className="grid gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map((f) => (
               <div
                 key={f.title}
@@ -151,6 +155,25 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
+          <div className="grid gap-4" aria-labelledby="coming-soon-heading">
+            <h3 id="coming-soon-heading" className="text-center text-sm font-semibold text-muted-foreground">
+              Coming soon — not available yet
+            </h3>
+            <ul className="grid gap-3 sm:grid-cols-3">
+              {COMING_SOON.map((f) => (
+                <li key={f.title} className="grid content-start gap-2 rounded-xl border border-dashed p-5">
+                  <div className="flex items-center gap-2">
+                    <f.icon className="size-4 text-muted-foreground" />
+                    <span className="font-medium">{f.title}</span>
+                    <span className="ml-auto rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      Coming soon
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{f.body}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
@@ -162,7 +185,7 @@ export default function LandingPage() {
             title="One continuous pipeline"
             body="Each stage hands off to the next, so nothing gets lost between tools."
           />
-          <ol className="grid gap-4 md:grid-cols-5">
+          <ol className="grid gap-4 md:grid-cols-4">
             {WORKFLOW.map((w, i) => (
               <li key={w.step} className="relative grid content-start gap-3 rounded-xl border bg-card p-5">
                 <span className="font-mono text-xs text-brand">0{i + 1}</span>
