@@ -11,12 +11,15 @@ export type SidebarProps = {
   sections: NavSection[];
   workspaces: SwitcherWorkspace[];
   activeWorkspaceId: string;
+  /** Owners and admins see the link to /setup. */
+  showSetup: boolean;
 };
 
 export function SidebarContent({
   sections,
   workspaces,
   activeWorkspaceId,
+  showSetup,
   onNavigate,
 }: SidebarProps & { onNavigate?: () => void }) {
   return (
@@ -35,16 +38,18 @@ export function SidebarContent({
       <div className="flex-1 overflow-y-auto px-3 pb-4">
         <SidebarNav sections={sections} onNavigate={onNavigate} />
       </div>
-      <div className="border-t border-sidebar-border p-3">
-        <Link
-          href="/setup"
-          onClick={onNavigate}
-          className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
-        >
-          <BookOpenIcon className="size-4" />
-          Setup &amp; integrations
-        </Link>
-      </div>
+      {showSetup ? (
+        <div className="border-t border-sidebar-border p-3">
+          <Link
+            href="/setup"
+            onClick={onNavigate}
+            className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
+          >
+            <BookOpenIcon className="size-4" />
+            Setup &amp; integrations
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
 }

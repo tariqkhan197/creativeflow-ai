@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { activityHref, describeActivity, referencedUserIds } from "@/lib/activity";
 import { getIntegrationStatus } from "@/lib/env/server";
+import { canViewSetup } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney, formatRelativeTime } from "@/lib/utils";
 import { getWorkspaceContext, MANAGER_ROLES, type WorkspaceWithRole } from "@/lib/workspace";
@@ -241,9 +242,11 @@ async function StaffHome({ workspace }: { workspace: WorkspaceWithRole }) {
                     )}
                   </div>
                 ))}
-              <Link href="/setup" className="mt-1 text-xs font-medium text-brand hover:underline">
-                View setup guide →
-              </Link>
+              {canViewSetup(workspace.role) ? (
+                <Link href="/setup" className="mt-1 text-xs font-medium text-brand hover:underline">
+                  View setup guide →
+                </Link>
+              ) : null}
             </CardContent>
           </Card>
         </div>

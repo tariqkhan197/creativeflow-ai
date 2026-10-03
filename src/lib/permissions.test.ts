@@ -4,6 +4,7 @@ import {
   canLeave,
   canManageMember,
   canManagePortalAccess,
+  canViewSetup,
   canManageWork,
   grantableRoles,
   isStaff,
@@ -61,5 +62,12 @@ describe("canManagePortalAccess", () => {
     expect(canManagePortalAccess("manager")).toBe(true);
     expect(canManagePortalAccess("member")).toBe(false);
     expect(canManagePortalAccess("client")).toBe(false);
+  });
+});
+
+describe("canViewSetup", () => {
+  it("allows only owners and admins once Supabase is connected", () => {
+    expect(["owner", "admin"].map((r) => canViewSetup(r as never))).toEqual([true, true]);
+    expect(["manager", "member", "client"].map((r) => canViewSetup(r as never))).toEqual([false, false, false]);
   });
 });

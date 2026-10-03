@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { CheckCircle2Icon, CircleDashedIcon, ExternalLinkIcon } from "lucide-react";
 import { Logo } from "@/components/brand/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -8,6 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getIntegrationStatus } from "@/lib/env/server";
 import { isSupabaseConfigured } from "@/lib/env/public";
+import { requireUser } from "@/lib/auth/session";
+import { canViewSetup } from "@/lib/permissions";
+import { getWorkspaceContext } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Setup" };
 // Reflect the server's current environment on every request.
@@ -65,6 +69,13 @@ const STEPS = [
 ];
 
 export default async function SetupPage() {
+  // Before Supabase is connected nobody can sign in, so the setup guide is public.
+  // Afterwards it is for workspace owners and admins only.
+  if (isSupabaseConfigured) {
+    await requireUser("/setup");
+    const { active } = await getWorkspaceContext();
+    if (!canViewSetup(active.role)) notFound();
+  }
   const integrations = await getIntegrationStatus();
 
   return (
@@ -151,10 +162,7 @@ export default async function SetupPage() {
         ) : (
           <div className="flex flex-wrap gap-3">
             <Button asChild variant="brand">
-              <Link href="/signup">Create an account</Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href="/login">Sign in</Link>
+              <Link href="/app">Back to the workspace</Link>
             </Button>
           </div>
         )}

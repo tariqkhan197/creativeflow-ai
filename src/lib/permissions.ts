@@ -14,6 +14,8 @@ const ADMINS: WorkspaceRole[] = ["owner", "admin"];
 export const isStaff = (role: WorkspaceRole) => STAFF.includes(role);
 export const canManageWork = (role: WorkspaceRole) => MANAGERS.includes(role); // clients, projects (create/delete)
 export const canInvite = (role: WorkspaceRole) => ADMINS.includes(role);
+/** The /setup page (which integrations are configured) — owners and admins once Supabase is connected. */
+export const canViewSetup = (role: WorkspaceRole) => ADMINS.includes(role);
 /** Client portal access (client-role invitations and members) — managers and above. */
 export const canManagePortalAccess = (role: WorkspaceRole) => MANAGERS.includes(role);
 

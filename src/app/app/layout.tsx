@@ -5,6 +5,7 @@ import { NotificationsMenu } from "@/components/app/notifications-menu";
 import { UserMenu } from "@/components/app/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { navForRole } from "@/lib/navigation";
+import { canViewSetup } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceContext, ROLE_LABELS } from "@/lib/workspace";
 
@@ -34,6 +35,7 @@ export default async function AppLayout({ children }: LayoutProps<"/app">) {
     sections: navForRole(active.role),
     workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, roleLabel: ROLE_LABELS[w.role] })),
     activeWorkspaceId: active.id,
+    showSetup: canViewSetup(active.role),
   };
 
   return (
