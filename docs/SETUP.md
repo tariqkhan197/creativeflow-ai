@@ -159,11 +159,12 @@ sent anywhere; the app never falls back to another provider or model.
    the [rate limits page](https://ai.google.dev/gemini-api/docs/rate-limits) (also shown per project in AI Studio).
    Prefer a stable model code over a `-preview` one; previews change and are retired at short notice. There is
    deliberately no default model, so nothing is picked implicitly.
-3. Set `GEMINI_API_KEY`, `GEMINI_MODEL` and `SUPABASE_SECRET_KEY` (the server records AI results with it) in
-   `.env.local`, and in Vercel under Production (server-only; never prefix them with `NEXT_PUBLIC_`). `AI_PROVIDER`
-   can stay unset.
-4. Check the key and model with `npm run test:ai-live`: one real request (a 10-second script) that uses one request
-   of the free daily quota and writes nothing to the database.
+3. Set `AI_PROVIDER=gemini`, `GEMINI_API_KEY`, `GEMINI_MODEL` and `SUPABASE_SECRET_KEY` (the server records AI
+   results with it) in `.env.local`, and in Vercel under Production (server-only; never prefix them with
+   `NEXT_PUBLIC_`). The app treats an unset `AI_PROVIDER` as `gemini`, but the live test below needs it set
+   explicitly.
+4. Check the key and model with the live test (see [Live AI test](#live-ai-test)): one real request (a 10-second
+   script) that uses one request of the free daily quota and writes nothing to the database.
 
 Free-tier limitations to know about:
 
@@ -188,11 +189,52 @@ Free-tier limitations to know about:
 3. Set `ANTHROPIC_API_KEY` and `SUPABASE_SECRET_KEY` as above.
 4. Optional: `ANTHROPIC_MODEL`. The default is `claude-sonnet-5-5` (Claude Sonnet 5.5, $2 / $10 per million input /
    output tokens). A value that isn't a valid Anthropic model ID disables AI Studio with a clear message.
-5. `npm run test:ai-live` makes one small real request (a few cents) and writes nothing to the database.
+5. The live test with `AI_PROVIDER=anthropic` makes one small real request (a few cents) and writes nothing to the
+   database.
 
 The app also limits usage with either provider: 50 AI calls per workspace per 24 hours and 20 per user per hour
 (failed calls count). `/setup` shows AI Studio as configured only when the selected provider's settings and the
 Supabase secret key are set.
+
+#### Live AI test
+
+`npm run test:ai-live` sends one real request to the provider named by `AI_PROVIDER`, and only to that provider:
+with `gemini` it uses `GEMINI_API_KEY` and `GEMINI_MODEL` and never contacts Anthropic; with `anthropic` it uses
+`ANTHROPIC_API_KEY` (and `ANTHROPIC_MODEL`, optional). It reads `.env.local`; variables set in the shell take
+precedence. If `AI_PROVIDER` or a required setting is missing it stops with a message naming the setting (values
+are never printed), and API errors show the same safe message as the app (for example the daily free quota).
+
+In PowerShell, from the project folder. Keep the key in `.env.local` rather than typing it into the shell, so it
+doesn't end up in the PowerShell history:
+
+```powershell
+# .env.local should contain (with your own values):
+#   AI_PROVIDER=gemini
+#   GEMINI_API_KEY=<your Gemini API key>
+#   GEMINI_MODEL=<a free-tier Gemini model code>
+npm run test:ai-live
+```
+
+To try a different provider or model for one run without editing `.env.local`, set it for the current PowerShell
+session and remove it afterwards:
+
+```powershell
+$env:AI_PROVIDER = "gemini"
+$env:GEMINI_MODEL = "<a free-tier Gemini model code>"
+npm run test:ai-live
+Remove-Item Env:\AI_PROVIDER, Env:\GEMINI_MODEL
+```
+
+If the test calls the wrong provider, check for leftover session variables (this prints the provider and True/False for
+each key, never key values) and make sure you have the latest code (`src\lib\ai\ai.live.test.ts` must exist; older checkouts had a
+live test that always called Anthropic):
+
+```powershell
+$env:AI_PROVIDER
+Test-Path Env:\GEMINI_API_KEY, Env:\GEMINI_MODEL, Env:\ANTHROPIC_API_KEY
+git pull
+Test-Path src\lib\ai\ai.live.test.ts
+```
 
 Generating a script usually takes under a minute but can take up to about two and a half minutes. The AI Studio pages
 set `maxDuration = 300` (seconds) for their Server Actions. Check that your Vercel plan allows this function duration

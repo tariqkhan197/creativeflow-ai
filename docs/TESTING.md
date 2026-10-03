@@ -1,14 +1,14 @@
 # Testing
 
-| Command                            | What it covers                                                                                                                             | Needs Supabase |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
-| `npm run test:unit`                | Validation, permissions, media helpers, upload state machine, threads; TUS client against a real local TUS server                          | No             |
-| `npm run test:db`                  | Every migration plus RLS, trigger and storage-policy tests in PGlite, run with and without default grants                                  | No             |
-| `npm run test:browser`             | Review viewers, comments, client-portal mode and decisions, AI Studio brief form and script editor in Chromium (run `npm run build` first) | No             |
-| `npm run check:bundle`             | After a build: no secret names, AI SDK code or key-shaped values in the browser bundles                                                    | No             |
-| `npm run test:ai-live`             | One real request to the `AI_PROVIDER` model (Gemini: one free-tier request; Anthropic: a few cents); nothing is written to the database    | Provider key   |
-| `npm run verify:supabase`          | Configuration, auth settings, migrations, buckets, upload limits (read-only)                                                               | Yes            |
-| `npm run verify:supabase -- --e2e` | Real flows against your project with throwaway users, cleaned up afterwards                                                                | Yes            |
+| Command                            | What it covers                                                                                                                                        | Needs Supabase |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `npm run test:unit`                | Validation, permissions, media helpers, upload state machine, threads; TUS client against a real local TUS server                                     | No             |
+| `npm run test:db`                  | Every migration plus RLS, trigger and storage-policy tests in PGlite, run with and without default grants                                             | No             |
+| `npm run test:browser`             | Review viewers, comments, client-portal mode and decisions, AI Studio brief form and script editor in Chromium (run `npm run build` first)            | No             |
+| `npm run check:bundle`             | After a build: no secret names, AI SDK code or key-shaped values in the browser bundles                                                               | No             |
+| `npm run test:ai-live`             | One real request to the provider in `AI_PROVIDER` only (Gemini: one free-tier request; Anthropic: a few cents); see [SETUP.md](SETUP.md#live-ai-test) | Provider key   |
+| `npm run verify:supabase`          | Configuration, auth settings, migrations, buckets, upload limits (read-only)                                                                          | Yes            |
+| `npm run verify:supabase -- --e2e` | Real flows against your project with throwaway users, cleaned up afterwards                                                                           | Yes            |
 
 ## Phase 5 AI Studio manual checklist (real Supabase + Gemini)
 

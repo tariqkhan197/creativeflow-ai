@@ -20,9 +20,9 @@ export const DEFAULT_AI_PROVIDER: AiProvider = "gemini";
 export const DEFAULT_AI_MODEL = "claude-sonnet-5-5";
 
 /** Anthropic model IDs: "claude-" followed by lowercase letters, digits, dots and dashes. */
-const ANTHROPIC_MODEL_ID = /^claude-[a-z0-9][a-z0-9.-]{1,80}$/;
+export const ANTHROPIC_MODEL_ID = /^claude-[a-z0-9][a-z0-9.-]{1,80}$/;
 /** Gemini model codes: "gemini-" followed by lowercase letters, digits, dots and dashes. */
-const GEMINI_MODEL_ID = /^gemini-[a-z0-9][a-z0-9.-]{1,80}$/;
+export const GEMINI_MODEL_ID = /^gemini-[a-z0-9][a-z0-9.-]{1,80}$/;
 
 const PROVIDER_LABELS: Record<AiProvider, string> = { gemini: "Google Gemini", anthropic: "Anthropic Claude" };
 
