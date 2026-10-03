@@ -26,8 +26,8 @@ function isValidUrl(value: string | undefined): value is string {
   }
 }
 
+// The public site URL is resolved and validated server-side: see getSiteUrl() in ./site-url.ts.
 export const publicEnv = {
-  siteUrl: clean(process.env.NEXT_PUBLIC_SITE_URL) ?? "http://localhost:3000",
   supabaseUrl,
   supabasePublishableKey,
 } as const;

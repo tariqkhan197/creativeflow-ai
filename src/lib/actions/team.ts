@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
 import { ACTIVE_WORKSPACE_COOKIE, ACTIVE_WORKSPACE_COOKIE_OPTIONS, PENDING_INVITE_COOKIE } from "@/lib/cookies";
 import { dbErrorMessage } from "@/lib/db-errors";
-import { publicEnv } from "@/lib/env/public";
+import { getSiteUrl } from "@/lib/env/site-url";
 import { canInvite, canLeave, canManageMember, grantableRoles } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { clearExpiredInvitation, isWorkspaceMemberEmail } from "@/lib/team/members";
@@ -77,7 +77,7 @@ export async function createInvitation(_prev: FormState, formData: FormData): Pr
   return {
     status: "success",
     message: `Invitation created for ${email}.`,
-    data: { inviteUrl: `${publicEnv.siteUrl}/invite/${token}`, email },
+    data: { inviteUrl: `${getSiteUrl()}/invite/${token}`, email },
   };
 }
 

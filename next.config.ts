@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
+import { PHASE_PRODUCTION_BUILD, PHASE_PRODUCTION_SERVER } from "next/constants";
+import { resolveSiteUrl, siteUrlEnvFrom } from "./src/lib/env/site-url-rules";
 
-const nextConfig: NextConfig = {
-  /* config options here */
-};
+export default function config(phase: string): NextConfig {
+  // Fail a production build/start clearly when NEXT_PUBLIC_SITE_URL is missing,
+  // or local on a deployment, instead of shipping links to localhost.
+  if (phase === PHASE_PRODUCTION_BUILD || phase === PHASE_PRODUCTION_SERVER) {
+    const site = resolveSiteUrl(siteUrlEnvFrom(process.env));
+    if (!site.ok) throw new Error(`Configuration error: ${site.error}`);
+  }
 
-export default nextConfig;
+  return {};
+}

@@ -3,7 +3,8 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { PENDING_INVITE_COOKIE, PENDING_INVITE_COOKIE_OPTIONS } from "@/lib/cookies";
-import { isSupabaseConfigured, publicEnv } from "@/lib/env/public";
+import { isSupabaseConfigured } from "@/lib/env/public";
+import { getSiteUrl } from "@/lib/env/site-url";
 import { createClient } from "@/lib/supabase/server";
 import { safeRedirectPath } from "@/lib/routes";
 import { forgotPasswordSchema, resetPasswordSchema, signInSchema, signUpSchema } from "@/lib/validation/auth";
@@ -72,7 +73,7 @@ export async function signUp(_prev: FormState, formData: FormData): Promise<Form
     password: parsed.data.password,
     options: {
       data: { full_name: parsed.data.fullName },
-      emailRedirectTo: `${publicEnv.siteUrl}/auth/confirm?next=/onboarding`,
+      emailRedirectTo: `${getSiteUrl()}/auth/confirm?next=/onboarding`,
     },
   });
   if (error) {
@@ -106,7 +107,7 @@ export async function requestPasswordReset(_prev: FormState, formData: FormData)
 
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
-    redirectTo: `${publicEnv.siteUrl}/auth/confirm?next=/reset-password`,
+    redirectTo: `${getSiteUrl()}/auth/confirm?next=/reset-password`,
   });
 
   if (error && (error.code === "over_email_send_rate_limit" || error.code === "over_request_rate_limit")) {

@@ -21,7 +21,9 @@ cp .env.example .env.local
    - Publishable key (`sb_publishable_…`) → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
      (the legacy `anon` key also works)
    - Secret key (`sb_secret_…`) → `SUPABASE_SECRET_KEY`. **Server only. Never prefix it with `NEXT_PUBLIC_`.**
-3. Set `NEXT_PUBLIC_SITE_URL` to the URL the app runs on (`http://localhost:3000` locally).
+3. Set `NEXT_PUBLIC_SITE_URL` to the URL the app runs on (`http://localhost:3000` locally). Production builds stop
+   with a clear "Configuration error" if it is missing. On Vercel (production and preview), or on other hosts with
+   `REQUIRE_PUBLIC_SITE_URL=true`, it must also be a public `https://` origin, never localhost.
 
 > `NEXT_PUBLIC_*` values are inlined at build time. After changing them, restart `npm run dev` or rebuild.
 

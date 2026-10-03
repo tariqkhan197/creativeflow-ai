@@ -3,7 +3,7 @@ import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { publicEnv } from "@/lib/env/public";
+import { getSiteUrl } from "@/lib/env/site-url";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -16,7 +16,7 @@ const display = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(publicEnv.siteUrl),
+  metadataBase: new URL(getSiteUrl()),
   title: {
     default: "CreativeFlow AI — The operating system for creative teams",
     template: "%s · CreativeFlow AI",

@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { dbErrorMessage } from "@/lib/db-errors";
-import { publicEnv } from "@/lib/env/public";
+import { getSiteUrl } from "@/lib/env/site-url";
 import { canManagePortalAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { clearExpiredInvitation, isWorkspaceMemberEmail } from "@/lib/team/members";
@@ -78,7 +78,7 @@ export async function createClientInvitation(_prev: FormState, formData: FormDat
   return {
     status: "success",
     message: `Portal invitation created for ${email}.`,
-    data: { inviteUrl: `${publicEnv.siteUrl}/invite/${token}`, email },
+    data: { inviteUrl: `${getSiteUrl()}/invite/${token}`, email },
   };
 }
 
