@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { z } from "zod";
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, Trash2Icon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { ProjectApprovals } from "@/components/approvals/project-approvals";
 import { ConfirmAction } from "@/components/app/confirm-action";
 import { ProjectFiles } from "@/components/assets/project-files";
@@ -90,6 +90,13 @@ export default async function ProjectPage({ params }: PageProps<"/app/projects/[
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!p.archived_at ? <ProjectStatusSelect projectId={p.id} status={p.status} /> : null}
+          {!p.archived_at ? (
+            <Button asChild variant="outline">
+              <Link href={`/app/ai-studio?project=${p.id}`}>
+                <SparklesIcon /> Write a script
+              </Link>
+            </Button>
+          ) : null}
           <ProjectFormDialog project={p} clients={clients.data ?? []} defaultCurrency={active.default_currency} />
           {canManage ? (
             <>

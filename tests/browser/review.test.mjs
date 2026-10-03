@@ -39,9 +39,10 @@ await build({
     "@/lib/actions/assets": path.join(import.meta.dirname, "stub-asset-actions.ts"),
     "@/lib/actions/comments": path.join(import.meta.dirname, "stub-comment-actions.ts"),
     "@/lib/actions/approvals": path.join(import.meta.dirname, "stub-approval-actions.ts"),
+    "@/lib/actions/ai-studio": path.join(import.meta.dirname, "stub-ai-studio-actions.ts"),
     "@/lib/supabase/client": path.join(import.meta.dirname, "stub-supabase-client.ts"),
   },
-  define: { "process.env.NODE_ENV": '"development"' },
+  define: { "process.env.NODE_ENV": '"development"', "process.env": "{}" },
   logLevel: "warning",
 });
 writeFileSync(
@@ -471,6 +472,110 @@ const undecodable = () =>
   await page.click('button:has-text("Confirm approval")');
   await page.waitForSelector("text=Approved. The team has been notified.");
   check("approving without a note works", await page.evaluate(() => window.__decisions?.[0]?.decision === "approved"));
+  await page.close();
+}
+
+// AI Studio (Phase 5): the brief form's not-configured, validation, in-progress and
+// failure states, and editing a generated script.
+{
+  const page = await fresh();
+  await page.evaluate(() => window.mountAiBrief("AI Studio isn't set up for this deployment yet."));
+  await page.waitForSelector("text=AI Studio isn't set up for this deployment yet.");
+  check(
+    "not configured: the brief can't be submitted",
+    (await page.getByRole("button", { name: "Generate script" }).isDisabled()) &&
+      (await page.locator('textarea[name="brief"]').isDisabled()),
+  );
+  await page.close();
+}
+{
+  const page = await fresh();
+  await page.evaluate(() => window.mountAiBrief(null));
+  await page.fill('textarea[name="brief"]', "Too short");
+  await page.click('button:has-text("Generate script")');
+  await page.waitForSelector("text=Describe the brief in at least a sentence or two");
+  check(
+    "a short brief shows its field error and nothing is sent",
+    (await page.evaluate(() => (window.__briefs ?? []).length)) === 0 &&
+      (await page.inputValue('textarea[name="brief"]')) === "Too short",
+  );
+
+  await page.fill(
+    'textarea[name="brief"]',
+    "A 30 second film for first-time runners about buying their first proper pair of shoes.",
+  );
+  await page.fill('input[name="tone"]', "Warm");
+  await page.selectOption('select[name="projectId"]', { label: "Spring launch" });
+  await page.click('button:has-text("Generate script")');
+  await page.waitForSelector("text=Writing your script");
+  check(
+    "while generating, the form is locked and shows progress",
+    (await page.locator('textarea[name="brief"]').isDisabled()) &&
+      (await page.getByRole("button", { name: "Generating…" }).isDisabled()),
+  );
+  check(
+    "the brief is sent with its fields",
+    await page.evaluate(
+      () =>
+        window.__briefs?.[0]?.tone === "Warm" &&
+        window.__briefs[0].projectId === "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+    ),
+  );
+  await page.evaluate(() => window.__finishGeneration());
+  await page.waitForSelector("text=The AI service is busy right now.");
+  check(
+    "a failed run shows its message, keeps the brief and links to the run",
+    (await page.getByRole("link", { name: /View the failed run/ }).getAttribute("href")) ===
+      "/app/ai-studio/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d" &&
+      (await page.inputValue('input[name="tone"]')) === "Warm" &&
+      !(await page.locator('textarea[name="brief"]').isDisabled()),
+  );
+  await page.close();
+}
+{
+  const page = await fresh();
+  await page.evaluate(() => window.mountAiEditor(false));
+  await page.waitForSelector("text=First steps");
+  check(
+    "read-only viewers see the script without an Edit button",
+    (await page.getByRole("button", { name: "Edit script" }).count()) === 0 &&
+      (await page.locator("text=Just one more lamp post.").count()) === 1,
+  );
+  await page.close();
+}
+{
+  const page = await fresh();
+  await page.evaluate(() => window.mountAiEditor(true));
+  await page.click('button:has-text("Edit script")');
+  await page.fill("#script-title", "First steps (v2)");
+  await page.click('button[aria-label="Move scene 2 up"]');
+  await page.click('button:has-text("Add scene")');
+  const third = page.locator('li[aria-label="Scene 3"]');
+  await third.locator('input[type="number"]').fill("8");
+  await page.click('button:has-text("Save script")');
+  await page.waitForSelector("text=Scene 3 (heading)");
+  check(
+    "an incomplete new scene is refused with its scene and field",
+    (await page.evaluate(() => (window.__savedScripts ?? []).length)) === 0,
+  );
+  await third.getByLabel("Heading").fill("Finish line");
+  await third.getByLabel("Visuals").fill("Runner crosses a chalk line, grinning.");
+  await page.locator('li[aria-label="Scene 1"]').getByRole("button", { name: "Add line" }).click();
+  await page.fill('input[aria-label="Scene 1 line 2 speaker"]', "Runner");
+  await page.fill('input[aria-label="Scene 1 line 2"]', "One more.");
+  check("the total length updates while editing", (await page.locator("text=Total length: 38s").count()) === 1);
+  await page.click('button:has-text("Save script")');
+  await page.waitForSelector('button:has-text("Edit script")');
+  const saved = await page.evaluate(() => window.__savedScripts?.[0]);
+  check(
+    "the edited script is saved in the new order with the total recalculated",
+    saved?.title === "First steps (v2)" &&
+      saved.scenes.map((s) => s.heading).join("|") === "The first mile|Dawn doubts|Finish line" &&
+      saved.totalSeconds === 38 &&
+      saved.scenes[0].dialogue[1]?.line === "One more." &&
+      saved.scenes[2].voiceover === null,
+    JSON.stringify(saved?.scenes?.map((s) => s.heading)),
+  );
   await page.close();
 }
 

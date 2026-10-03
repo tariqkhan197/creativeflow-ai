@@ -86,6 +86,14 @@ function sentence(entry: ActivityEntry, nameOf: (userId: string | null) => strin
       return `completed revision round ${String(m.round ?? "")}`;
     case "revision.open":
       return `reopened revision round ${String(m.round ?? "")}`;
+    case "ai.script_generated":
+      return str(m.title) ? `generated the script ${quoted(m.title)}` : "generated a script";
+    case "ai.storyboard_generated":
+      return str(m.title) ? `generated the storyboard ${quoted(m.title)}` : "generated a storyboard";
+    case "ai.script_deleted":
+      return str(m.title) ? `deleted the script ${quoted(m.title)}` : "deleted a script";
+    case "ai.storyboard_deleted":
+      return str(m.title) ? `deleted the storyboard ${quoted(m.title)}` : "deleted a storyboard";
     default:
       return entry.action.replace(/[._]/g, " ");
   }
@@ -115,6 +123,10 @@ export function activityHref(entry: ActivityEntry): string | null {
   if (entry.entity_type === "revision") {
     const projectId = meta(entry).project_id;
     return typeof projectId === "string" ? `/app/projects/${projectId}` : null;
+  }
+  if (entry.entity_type === "ai_generation") {
+    // Storyboard pages arrive in a later step; scripts open in AI Studio.
+    return entry.action === "ai.script_generated" ? `/app/ai-studio/${entry.entity_id}` : null;
   }
   if (entry.entity_type === "comment") {
     const m = meta(entry);

@@ -14,8 +14,9 @@ describe("SidebarNav", () => {
       </TooltipProvider>,
     );
     expect(html).not.toMatch(/Phase\s*\d/i);
-    expect(html.match(/Coming soon/g)?.length).toBe(3); // AI Studio, Invoices, Analytics
+    expect(html.match(/Coming soon/g)?.length).toBe(2); // Invoices, Analytics
     expect(html).toContain('href="/app/approvals"');
-    expect(html).not.toContain('href="/app/ai-studio"');
+    expect(html).toContain('href="/app/ai-studio"');
+    expect(html).not.toContain('href="/app/invoices"');
   });
 });

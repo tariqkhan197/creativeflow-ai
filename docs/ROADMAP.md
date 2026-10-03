@@ -130,7 +130,14 @@ Making Phases 1–4 safe to run for real customers. It doesn't add modules; Phas
 - [x] Step 2 — Anthropic integration (server only) with structured outputs: configurable model (default
       `claude-sonnet-5-5`), authorised and rate-limited runs, safe error handling, bundle secret check, opt-in live
       test
-- [ ] Steps 3–7 — Studio UI, editing and scene rewrites, storyboards, project section and exports, usage and docs
+- [x] Step 3 — Studio UI: brief form and script generation (`/app/ai-studio`), not-configured / limit / in-progress /
+      failed states, usage meters, workspace script history, script page with editing (text, timing, dialogue,
+      add/remove/reorder scenes), rename and link to a project, delete, "New version" / "Try again" from the same
+      brief, "Write a script" from a project, AI activity in the feed, sidebar link enabled
+- [ ] Step 4 — rewrite a single scene with AI (`start_ai_revision`)
+- [ ] Step 5 — storyboard from a script
+- [ ] Step 6 — scripts on the project page, CSV export and print page
+- [ ] Step 7 — usage panel for managers, marketing, opt-in real-API end-to-end test
 
 Scope:
 

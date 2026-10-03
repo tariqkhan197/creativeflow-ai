@@ -73,7 +73,12 @@ describe("generateScript", () => {
         p_kind: "script",
         p_title: "First Mile",
         p_project: null,
-        p_input: expect.objectContaining({ promptVersion: "script-v1", durationSeconds: 30, audience: "New runners" }),
+        p_input: expect.objectContaining({
+          promptVersion: "script-v1",
+          brief: brief.brief,
+          durationSeconds: 30,
+          audience: "New runners",
+        }),
       }),
     );
     expect(t.messagesFor).toHaveBeenCalledWith("test-key");

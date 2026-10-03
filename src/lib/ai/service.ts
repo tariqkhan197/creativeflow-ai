@@ -95,6 +95,7 @@ export async function generateScript(input: unknown, deps: AiServiceDeps = defau
     p_prompt: userMessage,
     p_input: {
       promptVersion: SCRIPT_PROMPT_VERSION,
+      brief: brief.brief,
       durationSeconds: brief.durationSeconds,
       audience: brief.audience ?? null,
       tone: brief.tone ?? null,

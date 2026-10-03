@@ -184,6 +184,15 @@ signed-in staff ──▶ generateScript() (src/lib/ai/service.ts, server only)
   overload, timeouts) become short, safe messages; logs record the error class, HTTP status and request ID only.
 - Refusal fallback to another model is off (decision D5). The SDK retries a failed request once.
 
+AI Studio pages (`src/app/app/ai-studio`) are staff-only server components that read through the user's RLS client.
+The brief form posts to `generateScriptAction` (`src/lib/actions/ai-studio.ts`), which calls `generateScript()` and
+redirects to the new script on success. Both pages set `maxDuration = 300` so the action can wait for the model.
+Edits (`saveScriptDocument`), details and deletion go through the user's client, so RLS and the
+`ai_generations_prepare` trigger decide who may change what (the creator or a manager; only `document`, `title` and
+`project_id`). The original model output stays in `output`; edits are stored in `document`. "New version" opens the
+form prefilled from the earlier run's stored brief (`?from=<id>`) and creates a separate generation. The usage
+meters count `ai_usage_events` for display only; the database enforces the limits.
+
 ## Payments (Phase 6)
 
 - Managers create invoices (draft → sent). Sending creates a Stripe Checkout Session server-side.

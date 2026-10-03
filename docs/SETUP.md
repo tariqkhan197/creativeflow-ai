@@ -155,6 +155,11 @@ All of these are server-only variables.
 The app also limits usage: 50 AI calls per workspace per 24 hours and 20 per user per hour (failed calls count).
 `/setup` shows AI Studio as configured only when both keys are set.
 
+Generating a script usually takes under a minute but can take up to about two and a half minutes. The AI Studio pages
+set `maxDuration = 300` (seconds) for their Server Actions. Check that your Vercel plan allows this function duration
+(Project → Settings → Functions); on a plan with a lower maximum, long generations stop early and are shown as
+failed after 15 minutes.
+
 ## 8. Checks
 
 ```bash

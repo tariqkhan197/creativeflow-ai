@@ -1,14 +1,34 @@
 # Testing
 
-| Command                            | What it covers                                                                                                    | Needs Supabase |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------- |
-| `npm run test:unit`                | Validation, permissions, media helpers, upload state machine, threads; TUS client against a real local TUS server | No             |
-| `npm run test:db`                  | Every migration plus RLS, trigger and storage-policy tests in PGlite, run with and without default grants         | No             |
-| `npm run test:browser`             | Review viewers, comments, client-portal mode and decisions in Chromium (run `npm run build` first)                | No             |
-| `npm run check:bundle`             | After a build: no secret names, Anthropic SDK code or key-shaped values in the browser bundles                    | No             |
-| `npm run test:ai-live`             | One real Anthropic request with your key (a few cents); nothing is written to the database                        | Anthropic key  |
-| `npm run verify:supabase`          | Configuration, auth settings, migrations, buckets, upload limits (read-only)                                      | Yes            |
-| `npm run verify:supabase -- --e2e` | Real flows against your project with throwaway users, cleaned up afterwards                                       | Yes            |
+| Command                            | What it covers                                                                                                                             | Needs Supabase |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| `npm run test:unit`                | Validation, permissions, media helpers, upload state machine, threads; TUS client against a real local TUS server                          | No             |
+| `npm run test:db`                  | Every migration plus RLS, trigger and storage-policy tests in PGlite, run with and without default grants                                  | No             |
+| `npm run test:browser`             | Review viewers, comments, client-portal mode and decisions, AI Studio brief form and script editor in Chromium (run `npm run build` first) | No             |
+| `npm run check:bundle`             | After a build: no secret names, Anthropic SDK code or key-shaped values in the browser bundles                                             | No             |
+| `npm run test:ai-live`             | One real Anthropic request with your key (a few cents); nothing is written to the database                                                 | Anthropic key  |
+| `npm run verify:supabase`          | Configuration, auth settings, migrations, buckets, upload limits (read-only)                                                               | Yes            |
+| `npm run verify:supabase -- --e2e` | Real flows against your project with throwaway users, cleaned up afterwards                                                                | Yes            |
+
+## Phase 5 AI Studio manual checklist (real Supabase + Anthropic)
+
+**Status: not run yet.** Needs `ANTHROPIC_API_KEY` (with credits) and `SUPABASE_SECRET_KEY` on the server, and
+migration `20261005000000` applied. Each generation is a real, billed request.
+
+1. Without the Anthropic key: `/app/ai-studio` shows "isn't set up" and the form is disabled; nothing is counted.
+2. With the keys: generate from a short brief (< 20 characters) → field error, no usage counted. Generate from a real
+   brief linked to a project → "Writing your script…", then the script page opens with scenes, model and tokens.
+   The usage meters go up by one; the dashboard activity shows "generated a script".
+3. Edit: change a line, move a scene, add a scene with no heading → save is refused naming the scene; fill it in
+   and save → "Script saved", "edited by you" appears, total length is recalculated.
+4. As a **member** who didn't create it: the script is readable but there is no Edit, Details or Delete. As a
+   **manager**: all three are available.
+5. Details: rename and link to another project; the project link in the sidebar card follows.
+6. "New version" opens the form prefilled with the brief; generating creates a second script and keeps the first.
+7. Failure: set `ANTHROPIC_MODEL=claude-does-not-exist-1` and generate → a clear model error and a "View the failed
+   run" link; the failed run shows "Try again". Restore the model afterwards.
+8. Delete a script → back to the list; the activity shows "deleted the script".
+9. A client-role user gets a 404 at `/app/ai-studio`; the sidebar has no AI Studio link for them.
 
 ## Phase 4 manual browser checklist (real Supabase)
 

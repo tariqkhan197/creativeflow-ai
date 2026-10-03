@@ -117,3 +117,24 @@ describe("Phase 3 activity", () => {
     );
   });
 });
+
+describe("AI Studio activity", () => {
+  it("describes generated and deleted scripts, with or without a title", () => {
+    expect(describeActivity(e("ai.script_generated", { title: "Launch film" }, "ai_generation", "g1"), nameOf)).toBe(
+      "generated the script “Launch film”",
+    );
+    expect(describeActivity(e("ai.script_generated", {}, "ai_generation", "g1"), nameOf)).toBe("generated a script");
+    expect(describeActivity(e("ai.script_deleted", { title: "Launch film" }, "ai_generation", "g1"), nameOf)).toBe(
+      "deleted the script “Launch film”",
+    );
+    expect(describeActivity(e("ai.storyboard_deleted", {}, "ai_generation", "g1"), nameOf)).toBe(
+      "deleted a storyboard",
+    );
+  });
+
+  it("links generated scripts to AI Studio, never deleted ones", () => {
+    expect(activityHref(e("ai.script_generated", {}, "ai_generation", "g1"))).toBe("/app/ai-studio/g1");
+    expect(activityHref(e("ai.script_deleted", {}, "ai_generation", "g1"))).toBeNull();
+    expect(activityHref(e("ai.storyboard_generated", {}, "ai_generation", "g2"))).toBeNull();
+  });
+});
