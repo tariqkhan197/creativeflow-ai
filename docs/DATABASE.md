@@ -41,7 +41,8 @@ workspaces 1─* activity_log
 | `review_comments`       | Timestamped review feedback                     | `timestamp_seconds`, `annotation` (x/y), threads, `is_internal`, resolve state                |
 | `approvals`             | Sign-off requests                               | Decided via `decide_approval()` RPC                                                           |
 | `revisions`             | Revision rounds                                 | `round_number` unique per project; auto-created on "changes requested"                        |
-| `ai_generations`        | Script / storyboard generations                 | prompt, input, structured `output`, model, token usage, status, error                         |
+| `ai_generations`        | Script / storyboard documents                   | prompt, input, original `output`, editable `document`, model, tokens, status, source script   |
+| `ai_usage_events`       | One row per AI model call                       | Append-only usage (purpose, model, tokens, status); drives the rate limits                    |
 | `invoices`              | Client invoices                                 | Totals and status maintained by triggers; clients see non-draft only                          |
 | `invoice_items`         | Line items                                      | `amount_cents` generated column; editable only while invoice is draft                         |
 | `payments`              | Transactions (Stripe or manual)                 | **No user write policies** — written by verified webhook with the secret key                  |
@@ -67,22 +68,23 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 
 ## Access matrix (RLS)
 
-| Resource                 | owner/admin | manager | member            | client (bound to client X)                | other workspace |
-| ------------------------ | ----------- | ------- | ----------------- | ----------------------------------------- | --------------- |
-| Workspace settings       | edit        | read    | read              | read name                                 | ✗               |
-| Members                  | manage      | read    | read              | read staff + self                         | ✗               |
-| Invitations              | manage      | client  | ✗                 | ✗                                         | ✗               |
-| Clients                  | CRUD        | CRUD    | read              | ✗ (name via `portal_projects`)            | ✗               |
-| Projects                 | CRUD        | CRUD    | read/update       | via `portal_projects` / `portal_project`  | ✗               |
-| Tasks                    | CRUD        | CRUD    | CRUD (own delete) | ✗                                         | ✗               |
-| Assets                   | CRUD        | CRUD    | upload/update     | shared + ready assets of visible projects | ✗               |
-| Comments                 | all         | all     | all               | non-internal; can post non-internal       | ✗               |
-| Approvals                | all         | all     | request/cancel    | visible versions; decide via RPC          | ✗               |
-| AI generations           | all         | all     | own               | ✗                                         | ✗               |
-| Invoices / items         | CRUD        | CRUD    | ✗                 | non-draft invoices for X                  | ✗               |
-| Payments                 | read        | read    | ✗                 | read for own invoices                     | ✗               |
-| Notifications            | own         | own     | own               | own                                       | ✗               |
-| Storage `project-assets` | all         | all     | upload            | download shared assets                    | ✗               |
+| Resource                 | owner/admin | manager | member                  | client (bound to client X)                | other workspace |
+| ------------------------ | ----------- | ------- | ----------------------- | ----------------------------------------- | --------------- |
+| Workspace settings       | edit        | read    | read                    | read name                                 | ✗               |
+| Members                  | manage      | read    | read                    | read staff + self                         | ✗               |
+| Invitations              | manage      | client  | ✗                       | ✗                                         | ✗               |
+| Clients                  | CRUD        | CRUD    | read                    | ✗ (name via `portal_projects`)            | ✗               |
+| Projects                 | CRUD        | CRUD    | read/update             | via `portal_projects` / `portal_project`  | ✗               |
+| Tasks                    | CRUD        | CRUD    | CRUD (own delete)       | ✗                                         | ✗               |
+| Assets                   | CRUD        | CRUD    | upload/update           | shared + ready assets of visible projects | ✗               |
+| Comments                 | all         | all     | all                     | non-internal; can post non-internal       | ✗               |
+| Approvals                | all         | all     | request/cancel          | visible versions; decide via RPC          | ✗               |
+| AI generations           | all         | all     | create; edit/delete own | ✗                                         | ✗               |
+| AI usage                 | read        | read    | read                    | ✗                                         | ✗               |
+| Invoices / items         | CRUD        | CRUD    | ✗                       | non-draft invoices for X                  | ✗               |
+| Payments                 | read        | read    | ✗                       | read for own invoices                     | ✗               |
+| Notifications            | own         | own     | own                     | own                                       | ✗               |
+| Storage `project-assets` | all         | all     | upload                  | download shared assets                    | ✗               |
 
 ## Storage buckets
 
@@ -102,6 +104,7 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 - `20261004000100_keep_records_on_user_deletion.sql`: deleting an account keeps the comments and files that person
   wrote or uploaded (the author/uploader/resolver becomes empty). Before this, the Phase 3 triggers refused the
   automatic clean-up, so such an account could not be deleted.
+- `20261005000000_phase5_ai_studio.sql`: Phase 5 (AI Studio) rules, listed below.
 
 ### Phase 2 database rules
 
@@ -152,3 +155,17 @@ All money is stored as integer **cents** (`bigint`) with an ISO-4217 currency co
 | Client portal users get an in-app notification when approval is requested                                                                                         | `approvals_after_change`                                            |
 | Activity: `approval.requested/approved/changes_requested/cancelled`, `revision.opened/in_progress/completed/…`                                                    | `approvals_after_change`, `decide_approval()`, `revisions_audit`    |
 | Managers may invite, see and revoke client-role invitations and remove client-role members; team invitations stay owner/admin-only                                | `invitations: managers …`, `members: managers remove client access` |
+
+### Phase 5 database rules (AI Studio)
+
+| Rule                                                                                                                                                      | Where                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Generations are created only through `start_ai_generation()` (staff of the workspace; storyboards need a completed script from the same workspace)        | function, `ai_generations_prepare` trigger, no insert policy |
+| Every model call is a row in `ai_usage_events`; users can read their workspace's rows but never write them                                                | table privileges and RLS                                     |
+| Limits: 50 model calls per workspace per 24 hours and 20 per user per hour (all workspaces), failed calls included, checked under advisory locks          | `private.ai_limits()`, `private.ai_reserve_run()`            |
+| Results (status, output, model, tokens, error) are recorded only by `finish_ai_run()`, which only the server's secret-key role (`service_role`) may run   | function privileges, `ai_generations_prepare`                |
+| Users may change only the title, the project and — once completed — the `document` (the creator or a manager); `output` keeps the model's original result | RLS update policy, `ai_generations_prepare`                  |
+| Scene rewrites (`start_ai_revision()`): the creator or a manager, on completed documents; each counts as a model call                                     | function                                                     |
+| A run pending for more than 15 minutes is marked failed when the next run starts in that workspace; its late result is refused                            | `private.ai_reserve_run()`, `finish_ai_run()`                |
+| Deleting a generation keeps its usage rows; a storyboard outlives its script; deleting an account keeps generations and usage                             | foreign keys (`ON DELETE SET NULL`)                          |
+| Activity: `ai.script_generated`, `ai.storyboard_generated`, `ai.*_deleted`                                                                                | `finish_ai_run()`, `ai_generations_audit`                    |

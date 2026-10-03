@@ -2205,6 +2205,442 @@ async function main() {
     assert.deepEqual(visible, [kimComment], "internal notes stay internal after the author is gone");
   });
 
+  /* ======================================================================== */
+  /* Phase 5: AI Studio (database)                                            */
+  /* ======================================================================== */
+
+  /** The server's secret-key role (service_role), used only to record AI results. */
+  async function asServer(fn) {
+    return db.transaction(async (tx) => {
+      await tx.query(`select set_config('request.jwt.claim.sub', '', true)`);
+      await tx.exec(`set local role service_role`);
+      return fn(tx);
+    });
+  }
+  const startAi = (
+    uid,
+    ws,
+    {
+      kind = "script",
+      prompt = "30s launch film for a running shoe",
+      input = {},
+      title = null,
+      project = null,
+      source = null,
+    } = {},
+  ) =>
+    as(
+      uid,
+      async (tx) =>
+        (
+          await tx.query(`select * from public.start_ai_generation($1, $2, $3, $4, $5, $6, $7)`, [
+            ws,
+            kind,
+            prompt,
+            input,
+            title,
+            project,
+            source,
+          ])
+        ).rows[0],
+    );
+  const finishAi = (event, fields) =>
+    asServer((tx) =>
+      tx.query(`select public.finish_ai_run($1, $2, $3, $4, $5, $6, $7, $8)`, [
+        event,
+        fields.ok,
+        fields.model ?? "claude-sonnet-5-5",
+        fields.inTokens ?? null,
+        fields.outTokens ?? null,
+        fields.output ?? null,
+        fields.document ?? null,
+        fields.error ?? null,
+      ]),
+    );
+  const aiRow = async (id) => (await db.query(`select * from public.ai_generations where id = $1`, [id])).rows[0];
+  const usageRow = async (id) => (await db.query(`select * from public.ai_usage_events where id = $1`, [id])).rows[0];
+  const SCRIPT = {
+    scenes: [{ heading: "Dawn run", voiceover: "Every mile starts here.", visuals: "Runner at sunrise", seconds: 6 }],
+  };
+
+  console.log("\nPhase 5 · AI Studio access");
+  let gen1, ev1;
+  await test("staff start a generation: a pending document and a pending usage event", async () => {
+    ({ generation_id: gen1, usage_event_id: ev1 } = await startAi(erin, wsA, {
+      title: "  Spring film  ",
+      project: projectId,
+      input: { tone: "upbeat", seconds: 30 },
+    }));
+    const g = await aiRow(gen1);
+    assert.equal(g.status, "pending");
+    assert.equal(g.kind, "script");
+    assert.equal(g.title, "Spring film");
+    assert.equal(g.created_by, erin);
+    assert.equal(g.project_id, projectId);
+    assert.equal(g.output, null);
+    assert.equal(g.document, null);
+    const e = await usageRow(ev1);
+    assert.deepEqual([e.status, e.purpose, e.user_id, e.generation_id], ["pending", "script", erin, gen1]);
+  });
+
+  await test("clients, other workspaces and anonymous users can't start or see AI Studio", async () => {
+    await rejects(startAi(dana, wsA), /Workspace not found/);
+    await rejects(startAi(bob, wsA), /Workspace not found/);
+    await rejects(
+      as(null, (tx) => tx.query(`select * from public.start_ai_generation($1, 'script', 'x')`, [wsA])),
+      /permission denied/,
+    );
+    for (const uid of [dana, bob]) {
+      const g = await as(uid, async (tx) => (await tx.query(`select id from public.ai_generations`)).rows);
+      const e = await as(uid, async (tx) => (await tx.query(`select id from public.ai_usage_events`)).rows);
+      assert.equal(g.length + e.length, 0);
+    }
+    const staff = await as(
+      carol,
+      async (tx) => (await tx.query(`select id from public.ai_usage_events where id = $1`, [ev1])).rows,
+    );
+    assert.equal(staff.length, 1);
+  });
+
+  await test("inputs are validated", async () => {
+    await rejects(startAi(erin, wsA, { prompt: "   " }), /Describe what you want/);
+    await rejects(startAi(erin, wsB), /Workspace not found/);
+    const bProject = await as(
+      bob,
+      async (tx) =>
+        (
+          await tx.query(
+            `insert into public.projects (workspace_id, name, created_by) values ($1, 'B film', $2) returning id`,
+            [wsB, bob],
+          )
+        ).rows[0].id,
+    );
+    await rejects(startAi(erin, wsA, { project: bProject }), /project from this workspace/);
+    await rejects(startAi(erin, wsA, { input: [1, 2] }), /ai_generations_input_shape/);
+    await rejects(startAi(erin, wsA, { source: gen1 }), /Only storyboards/);
+  });
+
+  console.log("\nPhase 5 · AI results can't be forged");
+  await test("users can't insert generations or usage events directly", async () => {
+    await rejects(
+      as(erin, (tx) =>
+        tx.query(
+          `insert into public.ai_generations (workspace_id, kind, prompt, status, output, created_by)
+           values ($1, 'script', 'x', 'completed', '{}'::jsonb, $2)`,
+          [wsA, erin],
+        ),
+      ),
+      /created through AI Studio|row-level security|permission denied/,
+    );
+    await rejects(
+      as(erin, (tx) =>
+        tx.query(`insert into public.ai_usage_events (workspace_id, user_id, purpose) values ($1, $2, 'script')`, [
+          wsA,
+          erin,
+        ]),
+      ),
+      /row-level security|permission denied/,
+    );
+  });
+
+  await test("users can't set status, output, model, tokens, errors or the document of a running generation", async () => {
+    for (const set of [
+      "status = 'completed'",
+      `output = '{"scenes":[]}'::jsonb`,
+      "model = 'fake-model'",
+      "input_tokens = 1",
+      "output_tokens = 1",
+      "error = 'x'",
+      "prompt = 'changed'",
+      "completed_at = now()",
+    ]) {
+      await rejects(
+        as(erin, (tx) => tx.query(`update public.ai_generations set ${set} where id = $1`, [gen1])),
+        /recorded by AI Studio/,
+      );
+    }
+    await rejects(
+      as(erin, (tx) =>
+        tx.query(`update public.ai_generations set document = '{"scenes":[]}'::jsonb where id = $1`, [gen1]),
+      ),
+      /Only a completed generation can be edited/,
+    );
+    // Refused outright (no table privilege) or matched by no RLS policy (0 rows): either way nothing changes.
+    const changed = async (uid, sql) => {
+      try {
+        return (await as(uid, (tx) => tx.query(sql, [ev1]))).affectedRows;
+      } catch (error) {
+        assert.match(error.message, /permission denied/);
+        return 0;
+      }
+    };
+    assert.equal(
+      (await changed(erin, `update public.ai_usage_events set output_tokens = 1, status = 'succeeded' where id = $1`)) +
+        (await changed(carol, `delete from public.ai_usage_events where id = $1`)),
+      0,
+    );
+    assert.equal((await usageRow(ev1)).status, "pending");
+  });
+
+  await test("only the server's secret-key role can record results", async () => {
+    await rejects(
+      as(erin, (tx) => tx.query(`select public.finish_ai_run($1, true, 'm', 1, 1, '{}'::jsonb)`, [ev1])),
+      /permission denied/,
+    );
+    await rejects(
+      as(null, (tx) => tx.query(`select public.finish_ai_run($1, true, 'm', 1, 1, '{}'::jsonb)`, [ev1])),
+      /permission denied/,
+    );
+    await rejects(finishAi(ev1, { ok: true }), /needs its output/);
+    await rejects(finishAi(ev1, { ok: false, error: "  " }), /needs an error message/);
+  });
+
+  await test("the server records a completed run: output, editable document, model, tokens and activity", async () => {
+    await finishAi(ev1, { ok: true, inTokens: 1800, outTokens: 4200, output: SCRIPT });
+    const g = await aiRow(gen1);
+    assert.equal(g.status, "completed");
+    assert.deepEqual(g.output, SCRIPT);
+    assert.deepEqual(g.document, SCRIPT);
+    assert.deepEqual([g.model, g.input_tokens, g.output_tokens, g.error], ["claude-sonnet-5-5", 1800, 4200, null]);
+    assert.ok(g.completed_at);
+    const e = await usageRow(ev1);
+    assert.deepEqual(
+      [e.status, e.model, e.input_tokens, e.output_tokens],
+      ["succeeded", "claude-sonnet-5-5", 1800, 4200],
+    );
+    assert.ok(e.finished_at);
+    const log = (await activity(wsA, "ai.script_generated")).at(-1);
+    assert.equal(log.actor_id, erin);
+    assert.equal(log.metadata.title, "Spring film");
+    await rejects(finishAi(ev1, { ok: true, output: SCRIPT }), /already finished/);
+  });
+
+  await test("a failed run records the error and nothing else", async () => {
+    const { generation_id: g2, usage_event_id: e2 } = await startAi(erin, wsA);
+    await finishAi(e2, { ok: false, error: "The AI service is overloaded. Please try again." });
+    const g = await aiRow(g2);
+    assert.deepEqual(
+      [g.status, g.output, g.document, g.error],
+      ["failed", null, null, "The AI service is overloaded. Please try again."],
+    );
+    assert.equal((await usageRow(e2)).status, "failed");
+    await rejects(
+      as(erin, (tx) => tx.query(`update public.ai_generations set document = '{}'::jsonb where id = $1`, [g2])),
+      /Only a completed generation can be edited/,
+    );
+  });
+
+  console.log("\nPhase 5 · Editing, storyboards and scene rewrites");
+  await test("the creator and managers edit the document, title and project; others can't", async () => {
+    const edited = { scenes: [{ ...SCRIPT.scenes[0], voiceover: "Every mile starts now." }] };
+    await as(erin, (tx) =>
+      tx.query(`update public.ai_generations set document = $2, title = 'Spring film v2' where id = $1`, [
+        gen1,
+        edited,
+      ]),
+    );
+    let g = await aiRow(gen1);
+    assert.deepEqual(g.document, edited);
+    assert.deepEqual(g.output, SCRIPT, "the original model output is kept");
+    assert.equal(g.edited_by, erin);
+    assert.ok(g.edited_at);
+    await as(carol, (tx) => tx.query(`update public.ai_generations set project_id = null where id = $1`, [gen1]));
+    g = await aiRow(gen1);
+    assert.equal(g.project_id, null);
+    assert.equal(g.edited_by, erin, "changing the project isn't a document edit");
+    const quentin = await createUser("quentin@agency-a.test", "Quentin");
+    await inviteAndAccept(alice, wsA, "quentin@agency-a.test", "member", quentin);
+    const other = await as(quentin, (tx) =>
+      tx.query(`update public.ai_generations set title = 'x' where id = $1`, [gen1]),
+    );
+    const client = await as(dana, (tx) =>
+      tx.query(`update public.ai_generations set title = 'x' where id = $1`, [gen1]),
+    );
+    assert.equal(other.affectedRows + client.affectedRows, 0);
+    await rejects(
+      as(erin, (tx) => tx.query(`update public.ai_generations set document = '"text"'::jsonb where id = $1`, [gen1])),
+      /ai_generations_document_shape/,
+    );
+    await rejects(
+      as(erin, (tx) => tx.query(`update public.ai_generations set document = null where id = $1`, [gen1])),
+      /can't be removed/,
+    );
+  });
+
+  let board, boardEv;
+  await test("a storyboard is based on a completed script from the same workspace", async () => {
+    const { generation_id: pendingScript } = await startAi(erin, wsA);
+    await rejects(startAi(erin, wsA, { kind: "storyboard", source: pendingScript }), /must finish generating/);
+    await rejects(startAi(erin, wsA, { kind: "storyboard" }), /Choose a script/);
+    await rejects(startAi(bob, wsB, { kind: "storyboard", source: gen1 }), /Choose a script/);
+    ({ generation_id: board, usage_event_id: boardEv } = await startAi(carol, wsA, {
+      kind: "storyboard",
+      source: gen1,
+    }));
+    await rejects(startAi(erin, wsA, { kind: "storyboard", source: board }), /Choose a script/);
+    const g = await aiRow(board);
+    assert.deepEqual([g.kind, g.source_generation_id, g.created_by], ["storyboard", gen1, carol]);
+    assert.equal((await usageRow(boardEv)).purpose, "storyboard");
+    await finishAi(boardEv, { ok: true, inTokens: 3000, outTokens: 6000, output: { frames: [{ shot: "Wide" }] } });
+    assert.equal((await aiRow(board)).status, "completed");
+    assert.equal((await activity(wsA, "ai.storyboard_generated")).at(-1).actor_id, carol);
+  });
+
+  await test("scene rewrites: the creator or a manager, on completed documents, logged as usage", async () => {
+    const quentin = (await db.query(`select id from auth.users where email = 'quentin@agency-a.test'`)).rows[0].id;
+    await rejects(
+      as(quentin, (tx) => tx.query(`select public.start_ai_revision($1)`, [gen1])),
+      /creator or a manager/,
+    );
+    await rejects(
+      as(dana, (tx) => tx.query(`select public.start_ai_revision($1)`, [gen1])),
+      /Generation not found/,
+    );
+    await rejects(
+      as(bob, (tx) => tx.query(`select public.start_ai_revision($1)`, [gen1])),
+      /Generation not found/,
+    );
+    const { generation_id: failed } = (
+      await db.query(`select id as generation_id from public.ai_generations where status = 'failed' limit 1`)
+    ).rows[0];
+    await rejects(
+      as(erin, (tx) => tx.query(`select public.start_ai_revision($1)`, [failed])),
+      /Only a completed/,
+    );
+
+    const ev = await as(
+      carol,
+      async (tx) => (await tx.query(`select public.start_ai_revision($1) as id`, [gen1])).rows[0].id,
+    );
+    const before = await aiRow(gen1);
+    await rejects(finishAi(ev, { ok: true, output: SCRIPT }), /needs the updated document/);
+    const rewritten = { scenes: [{ ...SCRIPT.scenes[0], visuals: "Runner in rain" }] };
+    await finishAi(ev, { ok: true, inTokens: 900, outTokens: 700, document: rewritten });
+    const g = await aiRow(gen1);
+    assert.deepEqual(g.document, rewritten);
+    assert.deepEqual(g.output, SCRIPT);
+    assert.equal(g.edited_by, carol);
+    assert.deepEqual([g.input_tokens, g.output_tokens], [before.input_tokens, before.output_tokens]);
+    const e = await usageRow(ev);
+    assert.deepEqual([e.purpose, e.status, e.output_tokens, e.generation_id], ["scene", "succeeded", 700, gen1]);
+  });
+
+  console.log("\nPhase 5 · Limits and stale runs");
+  await test("50 model calls per workspace per 24 hours (older calls don't count)", async () => {
+    const lena = await createUser("lena@limits.test", "Lena");
+    const wsL = await as(
+      lena,
+      async (tx) => (await tx.query(`select public.create_workspace('Limits L', 'limits-l') as id`)).rows[0].id,
+    );
+    await db.query(
+      `insert into public.ai_usage_events (workspace_id, purpose, status, created_at)
+       select $1, 'script', 'failed', now() - interval '2 hours' from generate_series(1, 49)`,
+      [wsL],
+    );
+    await db.query(
+      `insert into public.ai_usage_events (workspace_id, purpose, status, created_at)
+       select $1, 'script', 'succeeded', now() - interval '25 hours' from generate_series(1, 30)`,
+      [wsL],
+    );
+    await startAi(lena, wsL); // the 50th call in 24 hours
+    await rejects(startAi(lena, wsL), /limit of 50 AI generations in 24 hours/);
+    const n = (await db.query(`select count(*)::int as n from public.ai_generations where workspace_id = $1`, [wsL]))
+      .rows[0].n;
+    assert.equal(n, 1, "the refused call created nothing");
+  });
+
+  await test("20 model calls per user per hour, across workspaces", async () => {
+    const milo = await createUser("milo@limits.test", "Milo");
+    const wsM1 = await as(
+      milo,
+      async (tx) => (await tx.query(`select public.create_workspace('Limits M1', 'limits-m1') as id`)).rows[0].id,
+    );
+    const wsM2 = await as(
+      milo,
+      async (tx) => (await tx.query(`select public.create_workspace('Limits M2', 'limits-m2') as id`)).rows[0].id,
+    );
+    await db.query(
+      `insert into public.ai_usage_events (workspace_id, user_id, purpose, status, created_at)
+       select $1, $2, 'script', 'failed', now() - interval '30 minutes' from generate_series(1, 19)`,
+      [wsM1, milo],
+    );
+    await db.query(
+      `insert into public.ai_usage_events (workspace_id, user_id, purpose, status, created_at)
+       select $1, $2, 'script', 'succeeded', now() - interval '2 hours' from generate_series(1, 10)`,
+      [wsM1, milo],
+    );
+    await startAi(milo, wsM2); // the 20th in the last hour, in another workspace
+    await rejects(startAi(milo, wsM1), /limit of 20 AI generations per hour/);
+    await rejects(startAi(milo, wsM2), /limit of 20 AI generations per hour/);
+    const { generation_id } = (
+      await db.query(`select id as generation_id from public.ai_generations where workspace_id = $1`, [wsM2])
+    ).rows[0];
+    await finishAi(
+      (await db.query(`select id from public.ai_usage_events where generation_id = $1`, [generation_id])).rows[0].id,
+      { ok: true, output: SCRIPT },
+    );
+    await rejects(
+      as(milo, (tx) => tx.query(`select public.start_ai_revision($1)`, [generation_id])),
+      /limit of 20 AI generations per hour/,
+    );
+  });
+
+  await test("a run pending for over 15 minutes times out on the next start and its late result is refused", async () => {
+    const { generation_id: stuck, usage_event_id: stuckEv } = await startAi(erin, wsA);
+    await db.query(`update public.ai_generations set created_at = now() - interval '16 minutes' where id = $1`, [
+      stuck,
+    ]);
+    await db.query(`update public.ai_usage_events set created_at = now() - interval '16 minutes' where id = $1`, [
+      stuckEv,
+    ]);
+    const { generation_id: fresh } = await startAi(carol, wsA);
+    assert.deepEqual(
+      [(await aiRow(stuck)).status, (await aiRow(stuck)).error, (await usageRow(stuckEv)).status],
+      ["failed", "Timed out before the AI result arrived", "failed"],
+    );
+    assert.equal((await aiRow(fresh)).status, "pending");
+    await rejects(finishAi(stuckEv, { ok: true, output: SCRIPT }), /already finished/);
+  });
+
+  console.log("\nPhase 5 · Deletion");
+  await test("the creator or a manager deletes a generation; usage history is kept", async () => {
+    const quentin = (await db.query(`select id from auth.users where email = 'quentin@agency-a.test'`)).rows[0].id;
+    const notMine = await as(quentin, (tx) => tx.query(`delete from public.ai_generations where id = $1`, [board]));
+    const client = await as(dana, (tx) => tx.query(`delete from public.ai_generations where id = $1`, [board]));
+    assert.equal(notMine.affectedRows + client.affectedRows, 0);
+    await as(alice, (tx) => tx.query(`delete from public.ai_generations where id = $1`, [board]));
+    assert.equal(await aiRow(board), undefined);
+    const e = await usageRow(boardEv);
+    assert.deepEqual([e.generation_id, e.status, e.output_tokens], [null, "succeeded", 6000]);
+    assert.equal((await activity(wsA, "ai.storyboard_deleted")).at(-1).actor_id, alice);
+    // A script's storyboards survive it, unlinked.
+    const { generation_id: sb, usage_event_id: sbEv } = await startAi(erin, wsA, { kind: "storyboard", source: gen1 });
+    await finishAi(sbEv, { ok: true, output: { frames: [] } });
+    await as(erin, (tx) => tx.query(`delete from public.ai_generations where id = $1`, [gen1]));
+    assert.equal((await aiRow(sb)).source_generation_id, null);
+  });
+
+  await test("a result arriving after its generation was deleted is still recorded as usage", async () => {
+    const { generation_id: g, usage_event_id: e } = await startAi(erin, wsA);
+    await as(erin, (tx) => tx.query(`delete from public.ai_generations where id = $1`, [g]));
+    await finishAi(e, { ok: true, inTokens: 10, outTokens: 20, output: SCRIPT });
+    const u = await usageRow(e);
+    assert.deepEqual([u.generation_id, u.status, u.output_tokens], [null, "succeeded", 20]);
+  });
+
+  await test("deleting an account keeps its generations and usage", async () => {
+    const ivo = await createUser("ivo@agency-a.test", "Ivo");
+    await inviteAndAccept(alice, wsA, "ivo@agency-a.test", "member", ivo);
+    const { generation_id: g, usage_event_id: e } = await startAi(ivo, wsA);
+    await finishAi(e, { ok: true, output: SCRIPT });
+    await as(ivo, (tx) => tx.query(`update public.ai_generations set document = $2 where id = $1`, [g, SCRIPT]));
+    await db.query(`delete from auth.users where id = $1`, [ivo]);
+    const row = await aiRow(g);
+    assert.deepEqual([row.status, row.created_by, row.edited_by], ["completed", null, null]);
+    assert.deepEqual(row.document, SCRIPT);
+    assert.equal((await usageRow(e)).user_id, null);
+  });
+
   console.log("\nPhase 2 · Cleanup");
   await test("deleting a populated workspace removes all of its data", async () => {
     const tmp = await as(

@@ -19,6 +19,8 @@ export type ApprovalStatus = "pending" | "approved" | "changes_requested" | "can
 export type RevisionStatus = "open" | "in_progress" | "completed";
 export type AiGenerationKind = "script" | "storyboard";
 export type AiGenerationStatus = "pending" | "completed" | "failed";
+export type AiUsagePurpose = "script" | "storyboard" | "scene";
+export type AiUsageStatus = "pending" | "succeeded" | "failed";
 export type InvoiceStatus = "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void";
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded";
 
@@ -250,7 +252,30 @@ export type AiGeneration = {
   output_tokens: number | null;
   error: string | null;
   created_by: string | null;
+  /** Storyboards: the script they were generated from (null once that script is deleted). */
+  source_generation_id: string | null;
+  /** The current, user-editable content. `output` keeps the model's original result. */
+  document: Json | null;
+  completed_at: string | null;
+  edited_by: string | null;
+  edited_at: string | null;
 } & Timestamps;
+
+/** One call to the AI model (append-only; written only by the database functions). */
+export type AiUsageEvent = {
+  id: string;
+  workspace_id: string;
+  generation_id: string | null;
+  user_id: string | null;
+  purpose: AiUsagePurpose;
+  status: AiUsageStatus;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+};
 
 export type Invoice = {
   id: string;
@@ -367,6 +392,7 @@ export type Database = {
       approvals: Table<Approval, "workspace_id" | "project_id" | "title">;
       revisions: Table<Revision, "workspace_id" | "project_id" | "round_number" | "summary">;
       ai_generations: Table<AiGeneration, "workspace_id" | "kind" | "prompt">;
+      ai_usage_events: Table<AiUsageEvent, "workspace_id" | "purpose">;
       invoices: Table<Invoice, "workspace_id" | "client_id">;
       invoice_items: Table<
         InvoiceItem,
@@ -406,6 +432,33 @@ export type Database = {
         Args: { p_asset: string; p_title: string; p_message?: string | null; p_due_date?: string | null };
         Returns: string;
       };
+      start_ai_generation: {
+        Args: {
+          p_workspace: string;
+          p_kind: AiGenerationKind;
+          p_prompt: string;
+          p_input?: Json;
+          p_title?: string | null;
+          p_project?: string | null;
+          p_source?: string | null;
+        };
+        Returns: { generation_id: string; usage_event_id: string }[];
+      };
+      start_ai_revision: { Args: { p_generation: string }; Returns: string };
+      /** Server only (secret key / service_role). */
+      finish_ai_run: {
+        Args: {
+          p_event: string;
+          p_succeeded: boolean;
+          p_model: string;
+          p_input_tokens?: number | null;
+          p_output_tokens?: number | null;
+          p_output?: Json | null;
+          p_document?: Json | null;
+          p_error?: string | null;
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       workspace_role: WorkspaceRole;
@@ -418,6 +471,8 @@ export type Database = {
       revision_status: RevisionStatus;
       ai_generation_kind: AiGenerationKind;
       ai_generation_status: AiGenerationStatus;
+      ai_usage_purpose: AiUsagePurpose;
+      ai_usage_status: AiUsageStatus;
       invoice_status: InvoiceStatus;
       payment_status: PaymentStatus;
     };
