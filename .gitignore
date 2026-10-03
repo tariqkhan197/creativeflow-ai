@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local backups (git bundle files) must never be committed
+*.bundle
+
+# Supabase CLI local state (linked project ref, CLI version cache)
+supabase/.temp/
