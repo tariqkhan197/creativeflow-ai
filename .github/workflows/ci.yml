@@ -1,0 +1,50 @@
+# Runs the project's checks on every push and pull request.
+# No secrets are used: the database tests run in an in-process Postgres
+# (PGlite) and the browser tests use generated media. Real-project checks
+# (npm run verify:supabase -- --e2e) stay manual because they need your keys.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # CI builds and serves locally; real deployments set their public URL.
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Formatting
+        run: npm run format:check
+
+      - name: Lint, typecheck, unit and database tests
+        run: npm run check
+
+      - name: Production build
+        run: npm run build
+
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests (review UI and client portal mode)
+        run: npm run test:browser
