@@ -59,12 +59,12 @@ export function SidebarNav({ sections, onNavigate }: { sections: NavSection[]; o
                       <Icon className="size-4" />
                       <span className="flex-1">{item.label}</span>
                       <span className="rounded border border-border px-1.5 py-px text-[10px] font-medium">
-                        Phase {item.plannedPhase}
+                        Coming soon
                       </span>
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="right">
-                    {item.label} ships in roadmap phase {item.plannedPhase}
+                    {item.label} is coming soon and isn&apos;t available yet.
                   </TooltipContent>
                 </Tooltip>
               );
