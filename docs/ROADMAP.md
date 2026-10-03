@@ -1,8 +1,8 @@
 # Implementation roadmap
 
 Each phase ships working, tested, production-quality features end to end: UI, Server Actions, validation, loading,
-empty and error states, and RLS tests. Sidebar entries for modules that aren't built yet are shown disabled with
-their phase number; they never link to empty pages.
+empty and error states, and RLS tests. Sidebar entries for modules that aren't built yet are shown disabled and
+labelled "Coming soon"; they never link to empty pages. (The phase numbers are internal and not shown to customers.)
 
 ## Phase 1 — Foundation ✅ (this release)
 
@@ -79,7 +79,7 @@ Limitations, by design or deferred:
 - Realtime DELETE events carry only the comment id (a Supabase limitation). Ids are random UUIDs, and no content is
   sent.
 
-## Phase 4 — Client portal & approvals (implemented; awaiting real-project verification)
+## Phase 4 — Client portal & approvals ✅ (complete)
 
 - [x] Database (`20261004000000_phase4_client_portal.sql`): clients read projects only through `portal_projects` /
       `portal_project` (no budget, internal brief or agency notes); approvals target a ready, shared version of a
@@ -96,8 +96,8 @@ Limitations, by design or deferred:
 - [x] Downloads can be turned off per project (no download link is issued to client users)
 - [x] Tests: 24 new DB tests (106 total, both grant modes), unit tests (145), browser checks (46, including client
       mode and decisions), and Phase 4 flows in `verify:supabase -- --e2e`
-- [ ] Verified on the real Supabase project (`db push`, `verify:supabase -- --e2e`, manual checklist in
-      [TESTING.md](TESTING.md))
+- [x] Verified on the real Supabase project: migration applied, `verify:supabase -- --e2e` 83 passed, 1 warning,
+      0 failed, and the manual checklist in [TESTING.md](TESTING.md) passed
 
 Notes:
 
@@ -106,6 +106,23 @@ Notes:
 - Approval notifications are in-app only. Email notifications are planned for Phase 7.
 - Client users see team members' names but not other client users' profiles. Comments by a colleague at the same
   client are shown as "<client> reviewer".
+
+## Production launch (milestone, not a phase)
+
+Making Phases 1–4 safe to run for real customers. It doesn't add modules; Phase 5 remains AI Studio.
+
+- [x] Open-redirect fix: `?next=` paths reject backslashes and control characters and must stay on the same origin
+- [x] Marketing site only advertises what exists; AI, invoicing/payments and analytics are labelled "Coming soon"
+- [x] Deleting a user account keeps the comments and files they wrote or uploaded
+      (`20261004000100_keep_records_on_user_deletion.sql`)
+- [x] `NEXT_PUBLIC_SITE_URL` is required outside development and must be a public https URL on deployments
+- [x] Security headers on every response (frame protection, nosniff, referrer and permissions policies, HSTS)
+- [x] "Coming soon" instead of roadmap phases in the sidebar; `/setup` restricted to owners/admins once configured
+- [x] Branded root and global error pages; backup bundles and Supabase CLI state git-ignored
+- [x] GitHub Actions CI: format, lint, typecheck, unit + DB tests, build, browser tests
+- [ ] Apply `20261004000100` to the linked project (with approval), configure production Supabase (Site URL,
+      redirect URLs, SMTP, templates) and Vercel, deploy, and run the production smoke test in
+      [SETUP.md](SETUP.md#9-deploy-vercel)
 
 ## Phase 5 — AI Studio
 
@@ -132,7 +149,9 @@ Notes:
 ## Phase 8 — Hardening & launch
 
 - End-to-end tests (Playwright) against a local Supabase (`supabase start`)
-- CI (GitHub Actions): lint, typecheck, DB tests, build, e2e
-- Security headers / CSP, rate limiting on auth and AI endpoints, audit of RLS policies
+- CI (GitHub Actions): done for lint, typecheck, unit/DB/browser tests and build (production launch milestone);
+  e2e against a local Supabase still to add
+- Full Content-Security-Policy (frame protection and other basic headers are done), rate limiting on auth and AI
+  endpoints, audit of RLS policies
 - Observability (error tracking, structured logs), backups, data export and account deletion
 - Billing for the SaaS itself (subscription plans) if required

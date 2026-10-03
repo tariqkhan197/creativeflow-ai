@@ -157,11 +157,26 @@ The manual browser checklist for each phase is in [docs/TESTING.md](TESTING.md).
 
 ## 9. Deploy (Vercel)
 
-1. Import the GitHub repository in Vercel.
-2. Add every variable from `.env.example` under **Settings → Environment Variables**. Set `NEXT_PUBLIC_SITE_URL` to
-   the production URL.
-3. Add the production `/auth/confirm` URL to Supabase's redirect allow-list and update the Site URL.
-4. Deploy.
+1. Apply any new migrations to the Supabase project first (section 3, "Applying later migrations").
+2. Import the GitHub repository in Vercel (framework preset: Next.js; Node 20.11+).
+3. Under **Settings → Environment Variables → Production**, set:
+   - `NEXT_PUBLIC_SITE_URL`: the public `https://` URL (origin only). The build stops with a "Configuration
+     error" if it is missing or points to localhost.
+   - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+   - Optional: `STORAGE_MAX_UPLOAD_BYTES`.
+   - Not needed yet: `SUPABASE_SECRET_KEY` (only `verify:supabase` uses it, on your machine), Stripe and Anthropic
+     keys. Leave them out of Vercel until a feature needs them.
+4. In Supabase → **Authentication → URL Configuration**, set the Site URL to the same production URL and add
+   `https://<your domain>/auth/confirm` to Redirect URLs. Set up custom SMTP and the email templates (section 4).
+5. Deploy. After adding a custom domain, update `NEXT_PUBLIC_SITE_URL` and the Supabase Site URL to it and redeploy
+   (`NEXT_PUBLIC_*` values are fixed at build time).
+6. Smoke test on the production URL: sign up (confirmation email link), sign in, reset a password, create a
+   workspace, invite a teammate and a client, upload a file, comment, request approval, and as the client request
+   changes and approve. Check the response headers include `X-Frame-Options: DENY`.
+
+Every response carries security headers (frame protection, `nosniff`, referrer and permissions policies, HSTS);
+see `src/lib/security-headers.ts`. `/setup` is public only until Supabase is configured, then owners and admins
+only.
 
 ## Troubleshooting
 
