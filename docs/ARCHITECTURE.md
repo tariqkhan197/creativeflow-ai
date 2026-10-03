@@ -165,10 +165,24 @@ comments ◀──── Realtime postgres_changes (RLS per subscriber) ◀─�
 
 ## AI generation (Phase 5)
 
-- Server Action validates the brief, inserts an `ai_generations` row (`pending`), calls the Anthropic Messages API
-  server-side with structured output (JSON schema for script scenes / storyboard frames), stores `output`, token
-  usage and model, and marks it `completed` or `failed` with the error. Nothing is generated client-side.
-- Per-workspace rate limits are enforced by counting recent `ai_generations` rows.
+```
+signed-in staff ──▶ generateScript() (src/lib/ai/service.ts, server only)
+                     1. role check + zod brief validation
+                     2. not configured? → honest error, nothing reserved
+                     3. start_ai_generation()   as the user  → membership + limits (DB, under locks)
+                     4. Anthropic Messages API  structured output (zod schema), adaptive thinking
+                     5. finish_ai_run()         with the secret key → result, model, tokens, or a safe error
+```
+
+- The Anthropic key and the Supabase secret key are read only in `server-only` modules (`src/lib/ai/config.ts`,
+  `src/lib/supabase/admin.ts`). `npm run check:bundle` (also in CI) fails the build check if a secret name, the
+  Anthropic SDK or a key-shaped value appears in the browser bundles.
+- Users can't record or change AI results: only `finish_ai_run()`, executable by the secret-key role, writes status,
+  output, model and tokens (Phase 5 database rules in [DATABASE.md](DATABASE.md)).
+- The model's answer must match a JSON schema (Claude structured outputs) and is validated again with zod before it
+  is stored. Refusals, truncated answers, invalid output and API errors (auth, unknown model, rate limits,
+  overload, timeouts) become short, safe messages; logs record the error class, HTTP status and request ID only.
+- Refusal fallback to another model is off (decision D5). The SDK retries a failed request once.
 
 ## Payments (Phase 6)
 

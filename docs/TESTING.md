@@ -5,6 +5,8 @@
 | `npm run test:unit`                | Validation, permissions, media helpers, upload state machine, threads; TUS client against a real local TUS server | No             |
 | `npm run test:db`                  | Every migration plus RLS, trigger and storage-policy tests in PGlite, run with and without default grants         | No             |
 | `npm run test:browser`             | Review viewers, comments, client-portal mode and decisions in Chromium (run `npm run build` first)                | No             |
+| `npm run check:bundle`             | After a build: no secret names, Anthropic SDK code or key-shaped values in the browser bundles                    | No             |
+| `npm run test:ai-live`             | One real Anthropic request with your key (a few cents); nothing is written to the database                        | Anthropic key  |
 | `npm run verify:supabase`          | Configuration, auth settings, migrations, buckets, upload limits (read-only)                                      | Yes            |
 | `npm run verify:supabase -- --e2e` | Real flows against your project with throwaway users, cleaned up afterwards                                       | Yes            |
 

@@ -16,7 +16,8 @@ export const serverEnv = {
     // Legacy name, still supported by Supabase.
     clean(process.env.SUPABASE_SERVICE_ROLE_KEY),
   anthropicApiKey: clean(process.env.ANTHROPIC_API_KEY),
-  anthropicModel: clean(process.env.ANTHROPIC_MODEL) ?? "claude-sonnet-5-5",
+  /** Optional override; src/lib/ai/config.ts validates it and supplies the default model. */
+  anthropicModel: clean(process.env.ANTHROPIC_MODEL),
   stripeSecretKey: clean(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: clean(process.env.STRIPE_WEBHOOK_SECRET),
   /**
@@ -60,15 +61,15 @@ export async function getIntegrationStatus(): Promise<IntegrationStatus[]> {
       configured: Boolean(serverEnv.supabaseSecretKey),
       required: false,
       envVars: ["SUPABASE_SECRET_KEY"],
-      purpose: "Trusted server tasks such as recording Stripe payments.",
+      purpose: "Records AI Studio results on the server (and, later, Stripe payments).",
     },
     {
       key: "anthropic",
       label: "Anthropic (AI scripts & storyboards)",
-      configured: Boolean(serverEnv.anthropicApiKey),
+      configured: Boolean(serverEnv.anthropicApiKey && serverEnv.supabaseSecretKey),
       required: false,
-      envVars: ["ANTHROPIC_API_KEY"],
-      purpose: "Generates scripts and storyboards in AI Studio.",
+      envVars: ["ANTHROPIC_API_KEY", "SUPABASE_SECRET_KEY", "ANTHROPIC_MODEL (optional)"],
+      purpose: "Generates scripts and storyboards in AI Studio. Needs the Supabase secret key too.",
     },
     {
       key: "stripe",

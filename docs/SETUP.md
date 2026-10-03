@@ -134,12 +134,26 @@ Open <http://localhost:3000>, create an account, confirm your email and create y
 
 ## 7. Optional integrations
 
-| Integration | Variables                                    | Where to get them                                                               | Needed from |
-| ----------- | -------------------------------------------- | ------------------------------------------------------------------------------- | ----------- |
-| Anthropic   | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`       | <https://console.anthropic.com/settings/keys>                                   | Phase 5     |
-| Stripe      | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | <https://dashboard.stripe.com/apikeys>; webhook endpoint `/api/webhooks/stripe` | Phase 6     |
+| Integration | Variables                                                                     | Where to get them                                                               | Needed from         |
+| ----------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------- |
+| Anthropic   | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), plus `SUPABASE_SECRET_KEY` | <https://console.anthropic.com/settings/keys>                                   | Phase 5 (AI Studio) |
+| Stripe      | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                  | <https://dashboard.stripe.com/apikeys>; webhook endpoint `/api/webhooks/stripe` | Phase 6             |
 
 All of these are server-only variables.
+
+### AI Studio (Phase 5)
+
+1. Create an API key at <https://console.anthropic.com/settings/keys> and add credits or billing. Set a monthly
+   spend limit there (Settings → Limits) as a hard cap.
+2. Set `ANTHROPIC_API_KEY` and `SUPABASE_SECRET_KEY` (the server records AI results with it) in `.env.local`, and in
+   Vercel under Production (server-only; never prefix them with `NEXT_PUBLIC_`).
+3. Optional: `ANTHROPIC_MODEL`. The default is `claude-sonnet-5-5` (Claude Sonnet 5.5, $2 / $10 per million input /
+   output tokens). A value that isn't a valid Anthropic model ID disables AI Studio with a clear message.
+4. Check the key and model from your machine with `npm run test:ai-live`. It makes one small real request (a
+   10-second script, a few cents) and writes nothing to the database.
+
+The app also limits usage: 50 AI calls per workspace per 24 hours and 20 per user per hour (failed calls count).
+`/setup` shows AI Studio as configured only when both keys are set.
 
 ## 8. Checks
 

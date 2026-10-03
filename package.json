@@ -15,9 +15,12 @@
     "db:types": "supabase gen types typescript --linked --schema public > src/types/database.generated.ts",
     "verify:supabase": "node scripts/verify-supabase.mjs",
     "test:unit": "vitest run",
-    "test:browser": "node tests/browser/review.test.mjs"
+    "test:browser": "node tests/browser/review.test.mjs",
+    "check:bundle": "node scripts/check-client-bundle.mjs",
+    "test:ai-live": "vitest run --config vitest.live.config.mts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
     "class-variance-authority": "^0.7.1",

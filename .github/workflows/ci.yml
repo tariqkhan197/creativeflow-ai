@@ -43,6 +43,9 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: No secrets or server-only code in browser bundles
+        run: npm run check:bundle
+
       - name: Install Chromium for browser tests
         run: npx playwright install --with-deps chromium
 

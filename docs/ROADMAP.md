@@ -124,7 +124,15 @@ Making Phases 1–4 safe to run for real customers. It doesn't add modules; Phas
       redirect URLs, SMTP, templates) and Vercel, deploy, and run the production smoke test in
       [SETUP.md](SETUP.md#9-deploy-vercel)
 
-## Phase 5 — AI Studio
+## Phase 5 — AI Studio (in progress)
+
+- [x] Step 1 — database: documents, usage events, limits, server-only result recording (`20261005000000`)
+- [x] Step 2 — Anthropic integration (server only) with structured outputs: configurable model (default
+      `claude-sonnet-5-5`), authorised and rate-limited runs, safe error handling, bundle secret check, opt-in live
+      test
+- [ ] Steps 3–7 — Studio UI, editing and scene rewrites, storyboards, project section and exports, usage and docs
+
+Scope:
 
 - Anthropic integration (server only) with structured outputs
 - Script generator from a brief (tone, duration, audience, CTA) → scenes with VO/dialogue, visuals, timing
